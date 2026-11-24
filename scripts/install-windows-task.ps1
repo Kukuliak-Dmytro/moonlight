@@ -10,7 +10,8 @@ if (-not (Test-Path $BinaryPath)) {
 }
 
 $FullBinary = (Resolve-Path $BinaryPath).Path
-$Action = New-ScheduledTaskAction -Execute $FullBinary -Argument "daemon"
+$HiddenRunner = (Resolve-Path (Join-Path $PSScriptRoot "run-daemon-hidden.vbs")).Path
+$Action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$HiddenRunner`" `"$FullBinary`""
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
@@ -28,4 +29,4 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
-Write-Host "Installed and started Scheduled Task '$TaskName' using $FullBinary"
+Write-Host "Installed and started hidden Scheduled Task '$TaskName' using $FullBinary"
