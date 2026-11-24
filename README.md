@@ -203,13 +203,13 @@ moonlight/
 │   ├── gamma/                       # Native OS gamma night light (Windows gdi32 / macOS CoreGraphics)
 │   └── daemon/                      # Background loop, hot-reload, KVM reconnect handling, reset/restore
 ├── scripts/
-│   ├── build-all.ps1                # Cross-platform build script (Windows)
+│   ├── build-all.ps1                # Cross-compile Windows + macOS binaries (run on Windows)
 │   ├── install-windows-task.ps1     # Windows Task Scheduler autostart installer
 │   ├── run-daemon-hidden.vbs        # Hidden launcher for Windows (no console window)
 │   ├── install-macos-agent.sh       # macOS LaunchAgent installer
 │   ├── rescue-windows.bat           # Emergency rescue script (Windows)
 │   └── rescue-macos.command         # Emergency rescue script (macOS)
-├── config.example.json
-├── Makefile
+├── config.example.json              # Default 24-hour curve & safety config template
+├── Makefile                         # Build, cross-compile & test targets (macOS / Linux / Git Bash)
 └── go.mod
 ```
