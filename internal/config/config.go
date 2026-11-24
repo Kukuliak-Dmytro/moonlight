@@ -109,10 +109,14 @@ func DefaultConfig() *Config {
 		DDCTool:             "",
 		Schedule: []Point{
 			{Time: "09:30", Brightness: 0, TempK: 3400},
-			{Time: "10:00", Brightness: 25, TempK: 5000},
-			{Time: "10:30", Brightness: 50, TempK: 6500},
-			{Time: "16:00", Brightness: 50, TempK: 6500},
-			{Time: "21:00", Brightness: 0, TempK: 3400},
+			{Time: "10:00", Brightness: 70, TempK: 6500},
+			{Time: "12:00", Brightness: 60, TempK: 6200},
+			{Time: "14:00", Brightness: 50, TempK: 5800},
+			{Time: "16:00", Brightness: 40, TempK: 5300},
+			{Time: "17:00", Brightness: 30, TempK: 4800},
+			{Time: "18:00", Brightness: 20, TempK: 4300},
+			{Time: "19:00", Brightness: 10, TempK: 3800},
+			{Time: "20:00", Brightness: 0, TempK: 3400},
 		},
 	}
 }
