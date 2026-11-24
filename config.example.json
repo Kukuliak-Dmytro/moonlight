@@ -1,5 +1,6 @@
 {
-  "monitor_match": "M27UP,GBT273E",
+  "adapter": "Generic DDC/CI",
+  "monitor_match": "",
   "poll_interval_sec": 60,
   "command_delay_ms": 60,
   "retries": 2,

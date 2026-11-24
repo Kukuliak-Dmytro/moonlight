@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"moonlight/internal/adapter"
 	"moonlight/internal/config"
 	"moonlight/internal/daemon"
 	"moonlight/internal/ddc"
@@ -21,7 +22,7 @@ import (
 	"moonlight/internal/schedule"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
@@ -56,6 +57,8 @@ func main() {
 	switch cmd {
 	case "init":
 		runErr = cmdInit(*configPath, cmdArgs)
+	case "select", "setup":
+		runErr = cmdSelect(*configPath, cmdArgs)
 	case "probe":
 		runErr = cmdProbe(*configPath)
 	case "preview":
@@ -99,39 +102,114 @@ Usage:
   moonlight [-config path/to/config.json] <command> [args]
 
 Commands:
-  init [-force]           Create a default config.json tuned for Gigabyte M27UP
-  probe                   List connected DDC/CI monitors and read current VCP values
-  preview                 Show the interpolated 24-hour brightness/RGB curve
-  status                  Show active backend, pause state, and current target
-  apply [-dry-run]        Apply the current schedule target immediately
-  set [flags]             Manually set brightness/temp/RGB (-confirm auto-reverts in 12s)
-  reset                   EMERGENCY RESCUE: pause daemon & reset all monitors to safe defaults
-  restore                 Pause daemon & restore initial monitor backup saved before first write
-  pause [duration]        Pause automatic updates (e.g. "moonlight pause 2h", or forever)
-  resume                  Resume automatic updates and apply schedule immediately
-  daemon [-dry-run]       Run the background scheduling loop
-  version                 Print version
+  init [-force] [-no-select]  Create config.json and pick your monitor interactively
+  select [-no-apply]          Scan connected monitors, choose which one(s) to remember/switch to
+  probe                       List connected DDC/CI monitors and read current VCP values
+  preview                     Show the interpolated 24-hour brightness/RGB curve
+  status                      Show active backend, adapter, pause state, and current target
+  apply [-dry-run]            Apply the current schedule target immediately
+  set [flags]                 Manually set brightness/temp/RGB (-confirm auto-reverts in 12s)
+  reset                       EMERGENCY RESCUE: pause daemon & reset all monitors to safe defaults
+  restore                     Pause daemon & restore initial monitor backup saved before first write
+  pause [duration]            Pause automatic updates (e.g. "moonlight pause 2h", or forever)
+  resume                      Resume automatic updates and apply schedule immediately
+  daemon [-dry-run]           Run the background scheduling loop
+  version                     Print version
 `)
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func runMonitorPicker(cfg *config.Config, interactive bool) error {
+	backend := daemon.NewBackendFromConfig(cfg)
+	monitors, err := adapter.Discover(backend)
+	if err != nil {
+		return err
+	}
+	if len(monitors) == 0 {
+		return errors.New("no DDC/CI monitors detected")
+	}
+
+	if !interactive {
+		adapter.ApplySelection(cfg, []adapter.DiscoveredMonitor{monitors[0]})
+		return nil
+	}
+
+	selected, err := adapter.SelectInteractive(monitors, os.Stdin, os.Stdout)
+	if err != nil {
+		return err
+	}
+	adapter.ApplySelection(cfg, selected)
+	return nil
 }
 
 func cmdInit(configPath string, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "Overwrite existing config file")
+	noSelect := fs.Bool("no-select", false, "Skip interactive monitor selection")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if !*force {
 		if _, err := os.Stat(configPath); err == nil {
-			return fmt.Errorf("config already exists at %s (use -force to overwrite)", configPath)
+			return fmt.Errorf("config already exists at %s (use -force to overwrite, or `moonlight select` to switch monitor)", configPath)
 		}
 	}
 
 	cfg := config.DefaultConfig()
+	if !*noSelect {
+		if err := runMonitorPicker(cfg, isTerminal(os.Stdin)); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: monitor auto-discovery skipped (%v); defaulting to all monitors\n", err)
+		}
+	}
+
 	if err := config.Save(configPath, cfg); err != nil {
 		return err
 	}
-	fmt.Printf("Created default config at:\n  %s\n", configPath)
+	fmt.Printf("Saved config at:\n  %s\n", configPath)
+	fmt.Printf("Remembered monitor: filter=%q (adapter=%s)\n", cfg.MonitorMatch, cfg.Adapter)
+	fmt.Println("Tip: run `moonlight select` anytime to switch to a different monitor.")
+	return nil
+}
+
+func cmdSelect(configPath string, args []string) error {
+	fs := flag.NewFlagSet("select", flag.ContinueOnError)
+	noApply := fs.Bool("no-apply", false, "Save selection without immediately applying the schedule")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, _, err := loadConfigOrDefault(configPath)
+	if err != nil {
+		return err
+	}
+
+	if err := runMonitorPicker(cfg, true); err != nil {
+		return err
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nSaved monitor selection to %s\n", configPath)
+	fmt.Printf("  Adapter: %s\n", cfg.Adapter)
+	if cfg.MonitorMatch == "" {
+		fmt.Println("  Filter:  (all DDC/CI monitors)")
+	} else {
+		fmt.Printf("  Filter:  %q\n", cfg.MonitorMatch)
+	}
+
+	if !*noApply {
+		fmt.Println("\nApplying current schedule to selected monitor...")
+		return cmdApply(configPath, nil)
+	}
 	return nil
 }
 
@@ -239,6 +317,7 @@ func cmdStatus(configPath string) error {
 	backend := daemon.NewBackendFromConfig(cfg)
 	fmt.Printf("Config:   %s (exists=%v)\n", configPath, loaded)
 	fmt.Printf("Backend:  %s (night_light=%s)\n", backend.Name(), cfg.NightLightMode)
+	fmt.Printf("Adapter:  %s\n", cfg.Adapter)
 	fmt.Printf("Filter:   %q\n", cfg.MonitorMatch)
 	fmt.Printf("Safety:   min_brightness=%d%%, min_rgb=%d, safe_brightness=%d%%\n",
 		cfg.MinBrightness, cfg.MinRGB, cfg.SafeBrightness)
@@ -511,10 +590,14 @@ func cmdDaemon(configPath string, args []string) error {
 	}
 
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
-		if err := config.Save(configPath, config.DefaultConfig()); err != nil {
+		cfg := config.DefaultConfig()
+		if err := runMonitorPicker(cfg, isTerminal(os.Stdin)); err != nil {
+			log.Printf("info: initial monitor auto-discovery skipped (%v); using all monitors", err)
+		}
+		if err := config.Save(configPath, cfg); err != nil {
 			return fmt.Errorf("auto-create default config: %w", err)
 		}
-		log.Printf("created default config at %s", configPath)
+		log.Printf("created config at %s (adapter=%s, filter=%q)", configPath, cfg.Adapter, cfg.MonitorMatch)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

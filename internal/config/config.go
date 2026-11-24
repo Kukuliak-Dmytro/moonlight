@@ -21,8 +21,11 @@ type Point struct {
 
 // Config holds all runtime settings for moonlight.
 type Config struct {
-	// MonitorMatch filters external monitors by case-insensitive substring (e.g. "M27UP").
-	// Leave empty to target all detected DDC/CI monitors.
+	// Adapter records the auto-detected monitor adapter profile name (e.g. "Gigabyte / AORUS").
+	Adapter string `json:"adapter,omitempty"`
+
+	// MonitorMatch filters external monitors by comma-separated case-insensitive substrings.
+	// Leave empty to target all detected DDC/CI monitors. Use `moonlight select` to pick interactively.
 	MonitorMatch string `json:"monitor_match"`
 
 	// PollIntervalSec controls how often the daemon evaluates the curve.
@@ -96,10 +99,11 @@ func (s State) IsPaused(now time.Time) bool {
 	return true
 }
 
-// DefaultConfig returns a sensible starter configuration tuned for Gigabyte M27UP.
+// DefaultConfig returns a universal starter configuration for any DDC/CI monitor.
 func DefaultConfig() *Config {
 	return &Config{
-		MonitorMatch:        "M27UP,GBT273E",
+		Adapter:             "Generic DDC/CI",
+		MonitorMatch:        "",
 		PollIntervalSec:     60,
 		CommandDelayMs:      60,
 		Retries:             2,
