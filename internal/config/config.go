@@ -104,7 +104,7 @@ func DefaultConfig() *Config {
 		SafeBrightness:      50,
 		EnableBrightness:    true,
 		EnableNightLight:    true,
-		ColorPresetUser:     0,
+		ColorPresetUser:     11,
 		RGBNeutral:          [3]int{100, 100, 100},
 		DDCTool:             "",
 		Schedule: []Point{

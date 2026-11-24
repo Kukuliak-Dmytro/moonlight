@@ -188,8 +188,15 @@ func ApplyTarget(
 
 		if needRGB && !monFailed {
 			if cfg.ColorPresetUser > 0 && (!prev.PresetSent || opts.Force) {
-				if err := mon.SetVCP(ddc.VCPColorPreset, uint32(cfg.ColorPresetUser)); err != nil {
-					logger.Printf("warn: [%s] set color preset=%d failed: %v", info.Name, cfg.ColorPresetUser, err)
+				curPreset, err := mon.GetVCP(ddc.VCPColorPreset)
+				if err != nil || int(curPreset.Current) != cfg.ColorPresetUser {
+					if err := mon.SetVCP(ddc.VCPColorPreset, uint32(cfg.ColorPresetUser)); err != nil {
+						logger.Printf("warn: [%s] set color preset=%d failed: %v", info.Name, cfg.ColorPresetUser, err)
+					} else {
+						// Give the monitor scaler time to finish switching presets before RGB writes.
+						time.Sleep(400 * time.Millisecond)
+						nextState.PresetSent = true
+					}
 				} else {
 					nextState.PresetSent = true
 				}
