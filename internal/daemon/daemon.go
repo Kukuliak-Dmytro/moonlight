@@ -9,6 +9,7 @@ import (
 
 	"moonlight/internal/config"
 	"moonlight/internal/ddc"
+	"moonlight/internal/gamma"
 	"moonlight/internal/schedule"
 )
 
@@ -154,6 +155,9 @@ func ApplyTarget(
 			prev, havePrev = last[key]
 		}
 
+		useDDCRGB := cfg.EnableNightLight && (cfg.NightLightMode == "ddc" || cfg.NightLightMode == "both")
+		useGamma := cfg.EnableNightLight && (cfg.NightLightMode == "gamma" || cfg.NightLightMode == "both")
+
 		needBrightness := cfg.EnableBrightness && (opts.Force || !havePrev || !prev.HasBrightness || absInt(target.Brightness-prev.Brightness) >= cfg.MinDelta)
 		needRGB := cfg.EnableNightLight && (opts.Force || !havePrev || !prev.HasRGB ||
 			absInt(target.RGB[0]-prev.RGB[0]) >= cfg.MinDelta ||
@@ -165,8 +169,8 @@ func ApplyTarget(
 		}
 
 		if opts.DryRun {
-			logger.Printf("[dry-run] would apply [%s]: brightness=%d%% rgb=%v (~%dK)",
-				info.Name, target.Brightness, target.RGB, target.TempK)
+			logger.Printf("[dry-run] would apply [%s]: brightness=%d%% rgb=%v (~%dK, mode=%s)",
+				info.Name, target.Brightness, target.RGB, target.TempK, cfg.NightLightMode)
 			updatedCount++
 			continue
 		}
@@ -187,39 +191,55 @@ func ApplyTarget(
 		}
 
 		if needRGB && !monFailed {
-			if cfg.ColorPresetUser > 0 && (!prev.PresetSent || opts.Force) {
-				curPreset, err := mon.GetVCP(ddc.VCPColorPreset)
-				if err != nil || int(curPreset.Current) != cfg.ColorPresetUser {
-					if err := mon.SetVCP(ddc.VCPColorPreset, uint32(cfg.ColorPresetUser)); err != nil {
-						logger.Printf("warn: [%s] set color preset=%d failed: %v", info.Name, cfg.ColorPresetUser, err)
-					} else {
-						// Give the monitor scaler time to finish switching presets before RGB writes.
-						time.Sleep(400 * time.Millisecond)
-						nextState.PresetSent = true
-					}
-				} else {
-					nextState.PresetSent = true
-				}
-			}
-
-			channels := [3]struct {
-				code byte
-				val  int
-			}{
-				{ddc.VCPRedGain, target.RGB[0]},
-				{ddc.VCPGreenGain, target.RGB[1]},
-				{ddc.VCPBlueGain, target.RGB[2]},
-			}
-
 			rgbOK := true
-			for _, ch := range channels {
-				if err := mon.SetVCP(ch.code, uint32(ch.val)); err != nil {
-					logger.Printf("warn: [%s] set %s=%d failed: %v", info.Name, ddc.VCPName(ch.code), ch.val, err)
+
+			if useGamma {
+				ratios := gamma.Ratios{
+					float64(target.RGB[0]) / float64(cfg.RGBNeutral[0]),
+					float64(target.RGB[1]) / float64(cfg.RGBNeutral[1]),
+					float64(target.RGB[2]) / float64(cfg.RGBNeutral[2]),
+				}
+				if err := gamma.Apply(ratios); err != nil {
+					logger.Printf("warn: [%s] set gamma ratios=%v failed: %v", info.Name, ratios, err)
 					rgbOK = false
 					monFailed = true
-					break
 				}
 			}
+
+			if useDDCRGB && rgbOK {
+				if cfg.ColorPresetUser > 0 && (!prev.PresetSent || opts.Force) {
+					curPreset, err := mon.GetVCP(ddc.VCPColorPreset)
+					if err != nil || int(curPreset.Current) != cfg.ColorPresetUser {
+						if err := mon.SetVCP(ddc.VCPColorPreset, uint32(cfg.ColorPresetUser)); err != nil {
+							logger.Printf("warn: [%s] set color preset=%d failed: %v", info.Name, cfg.ColorPresetUser, err)
+						} else {
+							time.Sleep(400 * time.Millisecond)
+							nextState.PresetSent = true
+						}
+					} else {
+						nextState.PresetSent = true
+					}
+				}
+
+				channels := [3]struct {
+					code byte
+					val  int
+				}{
+					{ddc.VCPRedGain, target.RGB[0]},
+					{ddc.VCPGreenGain, target.RGB[1]},
+					{ddc.VCPBlueGain, target.RGB[2]},
+				}
+
+				for _, ch := range channels {
+					if err := mon.SetVCP(ch.code, uint32(ch.val)); err != nil {
+						logger.Printf("warn: [%s] set %s=%d failed: %v", info.Name, ddc.VCPName(ch.code), ch.val, err)
+						rgbOK = false
+						monFailed = true
+						break
+					}
+				}
+			}
+
 			if rgbOK {
 				nextState.RGB = target.RGB
 				nextState.HasRGB = true
@@ -255,9 +275,12 @@ func ApplyTarget(
 	return updatedCount, nil
 }
 
-// ResetAll forces safe brightness and neutral RGB on ALL detected DDC/CI monitors,
+// ResetAll forces safe brightness, neutral OS gamma, and neutral DDC RGB on ALL detected monitors,
 // bypassing MonitorMatch so emergency recovery always works.
 func ResetAll(cfg *config.Config, backend ddc.Backend, logger *log.Logger) error {
+	if err := gamma.Reset(); err != nil {
+		logger.Printf("warn: reset OS gamma failed: %v", err)
+	}
 	monitors, err := backend.ListMonitors()
 	if err != nil {
 		return err
@@ -298,8 +321,9 @@ func ResetAll(cfg *config.Config, backend ddc.Backend, logger *log.Logger) error
 	return lastErr
 }
 
-// RestoreBackup writes back the original hardware values saved in backup.json.
+// RestoreBackup writes back the original hardware values saved in backup.json and resets OS gamma.
 func RestoreBackup(cfg *config.Config, backend ddc.Backend, backupPath string, logger *log.Logger) error {
+	_ = gamma.Reset()
 	b, err := config.LoadBackup(backupPath)
 	if err != nil {
 		return err

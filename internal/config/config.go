@@ -54,8 +54,14 @@ type Config struct {
 	// EnableBrightness toggles hardware brightness (VCP 0x10) control.
 	EnableBrightness bool `json:"enable_brightness"`
 
-	// EnableNightLight toggles hardware RGB warmth (VCP 0x16/0x18/0x1A) control.
+	// EnableNightLight toggles warm night light control.
 	EnableNightLight bool `json:"enable_night_light"`
+
+	// NightLightMode selects how warm color temperature is applied:
+	//   "gamma" (default) - smooth OS gamma ramp (Windows gdi32 / macOS CoreGraphics), works in any monitor mode
+	//   "ddc"             - hardware DDC/CI RGB gain (VCP 0x16/0x18/0x1A)
+	//   "both"            - apply both gamma ramp and DDC/CI RGB gain
+	NightLightMode string `json:"night_light_mode"`
 
 	// ColorPresetUser optionally writes VCP 0x14 before updating RGB gains (0 disables).
 	// On some monitors User Color mode is 0x0B (11). Run `moonlight probe` first to verify.
@@ -104,6 +110,7 @@ func DefaultConfig() *Config {
 		SafeBrightness:      50,
 		EnableBrightness:    true,
 		EnableNightLight:    true,
+		NightLightMode:      "gamma",
 		ColorPresetUser:     0,
 		RGBNeutral:          [3]int{100, 100, 100},
 		DDCTool:             "",
@@ -295,6 +302,16 @@ func (c *Config) Validate() error {
 	}
 	if c.SafeBrightness < c.MinBrightness || c.SafeBrightness > 100 {
 		c.SafeBrightness = 70
+	}
+	switch strings.ToLower(strings.TrimSpace(c.NightLightMode)) {
+	case "", "gamma":
+		c.NightLightMode = "gamma"
+	case "ddc":
+		c.NightLightMode = "ddc"
+	case "both":
+		c.NightLightMode = "both"
+	default:
+		return fmt.Errorf("night_light_mode=%q must be one of \"gamma\", \"ddc\", \"both\"", c.NightLightMode)
 	}
 	for i, ch := range c.RGBNeutral {
 		if ch <= 0 || ch > 255 {

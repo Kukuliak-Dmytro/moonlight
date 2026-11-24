@@ -17,6 +17,7 @@ import (
 	"moonlight/internal/config"
 	"moonlight/internal/daemon"
 	"moonlight/internal/ddc"
+	"moonlight/internal/gamma"
 	"moonlight/internal/schedule"
 )
 
@@ -237,7 +238,7 @@ func cmdStatus(configPath string) error {
 
 	backend := daemon.NewBackendFromConfig(cfg)
 	fmt.Printf("Config:   %s (exists=%v)\n", configPath, loaded)
-	fmt.Printf("Backend:  %s\n", backend.Name())
+	fmt.Printf("Backend:  %s (night_light=%s)\n", backend.Name(), cfg.NightLightMode)
 	fmt.Printf("Filter:   %q\n", cfg.MonitorMatch)
 	fmt.Printf("Safety:   min_brightness=%d%%, min_rgb=%d, safe_brightness=%d%%\n",
 		cfg.MinBrightness, cfg.MinRGB, cfg.SafeBrightness)
@@ -395,6 +396,7 @@ func waitForEnter(timeout time.Duration) bool {
 }
 
 func revertSnapshots(cfg *config.Config, backend ddc.Backend, snaps map[string]config.MonitorSnapshot, logger *log.Logger) {
+	_ = gamma.Reset()
 	monitors, err := backend.ListMonitors()
 	if err != nil {
 		logger.Printf("warn: revert failed to list monitors: %v", err)
