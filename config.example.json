@@ -1,0 +1,20 @@
+{
+  "monitor_match": "M27UP",
+  "poll_interval_sec": 60,
+  "command_delay_ms": 60,
+  "retries": 2,
+  "min_delta": 1,
+  "enable_brightness": true,
+  "enable_night_light": true,
+  "color_preset_user": 0,
+  "rgb_neutral": [100, 100, 100],
+  "ddc_tool": "",
+  "schedule": [
+    { "time": "07:00", "brightness": 40, "temp_k": 5200 },
+    { "time": "09:30", "brightness": 75, "temp_k": 6500 },
+    { "time": "17:30", "brightness": 65, "temp_k": 6500 },
+    { "time": "19:30", "brightness": 45, "temp_k": 4800 },
+    { "time": "21:30", "brightness": 25, "temp_k": 3800 },
+    { "time": "23:30", "brightness": 12, "temp_k": 3200 }
+  ]
+}

@@ -1,0 +1,14 @@
+# Build artifacts
+/dist/
+/bin/
+/monlight
+/monlight.exe
+*.exe
+
+# Local runtime state / logs
+state.json
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
