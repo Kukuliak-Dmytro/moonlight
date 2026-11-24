@@ -10,15 +10,15 @@ try {
 
     Write-Host "Building Windows (amd64)..."
     $env:GOOS = "windows"; $env:GOARCH = "amd64"
-    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "monlight-windows-amd64.exe") ./cmd/monlight
+    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "moonlight-windows-amd64.exe") ./cmd/moonlight
 
     Write-Host "Building macOS Apple Silicon (arm64)..."
     $env:GOOS = "darwin"; $env:GOARCH = "arm64"
-    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "monlight-darwin-arm64") ./cmd/monlight
+    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "moonlight-darwin-arm64") ./cmd/moonlight
 
     Write-Host "Building macOS Intel (amd64)..."
     $env:GOOS = "darwin"; $env:GOARCH = "amd64"
-    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "monlight-darwin-amd64") ./cmd/monlight
+    go build -trimpath -ldflags="-s -w" -o (Join-Path $Dist "moonlight-darwin-amd64") ./cmd/moonlight
 
     Write-Host "`nDone! Artifacts in $Dist:"
     Get-ChildItem $Dist | Format-Table Name, Length

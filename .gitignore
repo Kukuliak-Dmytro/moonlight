@@ -1,8 +1,8 @@
 # Build artifacts
 /dist/
 /bin/
-/monlight
-/monlight.exe
+/moonlight
+/moonlight.exe
 *.exe
 
 # Local runtime state / logs

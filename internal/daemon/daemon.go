@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"monlight/internal/config"
-	"monlight/internal/ddc"
-	"monlight/internal/schedule"
+	"moonlight/internal/config"
+	"moonlight/internal/ddc"
+	"moonlight/internal/schedule"
 )
 
 // AppliedState remembers the last values written to a specific monitor.
@@ -298,7 +298,7 @@ func RestoreBackup(cfg *config.Config, backend ddc.Backend, backupPath string, l
 		return err
 	}
 	if len(b.Monitors) == 0 {
-		return fmt.Errorf("no saved snapshots in %s (use `monlight reset` instead)", backupPath)
+		return fmt.Errorf("no saved snapshots in %s (use `moonlight reset` instead)", backupPath)
 	}
 
 	monitors, err := backend.ListMonitors()
@@ -329,7 +329,7 @@ func RestoreBackup(cfg *config.Config, backend ddc.Backend, backupPath string, l
 	}
 
 	if restored == 0 {
-		return fmt.Errorf("none of the connected monitors matched backup.json (use `monlight reset` instead)")
+		return fmt.Errorf("none of the connected monitors matched backup.json (use `moonlight reset` instead)")
 	}
 	return nil
 }
@@ -351,7 +351,7 @@ func Run(ctx context.Context, configPath string, dryRun bool, logger *log.Logger
 	backend := NewBackendFromConfig(cfg)
 	lastApplied := make(map[string]AppliedState)
 
-	logger.Printf("monlight daemon started (backend=%s, config=%s, poll=%ds, filter=%q, dry_run=%v)",
+	logger.Printf("moonlight daemon started (backend=%s, config=%s, poll=%ds, filter=%q, dry_run=%v)",
 		backend.Name(), configPath, cfg.PollIntervalSec, cfg.MonitorMatch, dryRun)
 
 	wasPaused := false
@@ -379,7 +379,7 @@ func Run(ctx context.Context, configPath string, dryRun bool, logger *log.Logger
 				if st.PausedUntil != nil {
 					logger.Printf("paused until %s", st.PausedUntil.Format(time.Kitchen))
 				} else {
-					logger.Printf("paused indefinitely (run `monlight resume` to continue)")
+					logger.Printf("paused indefinitely (run `moonlight resume` to continue)")
 				}
 				wasPaused = true
 			}
@@ -420,7 +420,7 @@ func Run(ctx context.Context, configPath string, dryRun bool, logger *log.Logger
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Printf("monlight daemon stopping")
+			logger.Printf("moonlight daemon stopping")
 			return nil
 		case <-ticker.C:
 			tick(false)

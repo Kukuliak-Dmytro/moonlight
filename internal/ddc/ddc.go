@@ -49,11 +49,22 @@ type Backend interface {
 	ListMonitors() ([]Monitor, error)
 }
 
-// FilterMonitors keeps only monitors matching the case-insensitive substring
-// against Name, Device, or ID. Unmatched monitors are closed immediately.
+// FilterMonitors keeps only monitors matching any comma-separated case-insensitive
+// substring (e.g. "M27UP,GBT273E") against Name, Device, or ID.
+// Unmatched monitors are closed immediately.
 func FilterMonitors(monitors []Monitor, match string) []Monitor {
-	needle := strings.ToLower(strings.TrimSpace(match))
-	if needle == "" {
+	raw := strings.TrimSpace(match)
+	if raw == "" {
+		return monitors
+	}
+
+	var needles []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.ToLower(strings.TrimSpace(part)); p != "" {
+			needles = append(needles, p)
+		}
+	}
+	if len(needles) == 0 {
 		return monitors
 	}
 
@@ -61,7 +72,14 @@ func FilterMonitors(monitors []Monitor, match string) []Monitor {
 	for _, m := range monitors {
 		info := m.Info()
 		haystack := strings.ToLower(info.Name + " " + info.Device + " " + info.ID)
-		if strings.Contains(haystack, needle) {
+		found := false
+		for _, n := range needles {
+			if strings.Contains(haystack, n) {
+				found = true
+				break
+			}
+		}
+		if found {
 			matched = append(matched, m)
 		} else {
 			_ = m.Close()

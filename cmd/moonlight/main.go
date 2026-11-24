@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"monlight/internal/config"
-	"monlight/internal/daemon"
-	"monlight/internal/ddc"
-	"monlight/internal/schedule"
+	"moonlight/internal/config"
+	"moonlight/internal/daemon"
+	"moonlight/internal/ddc"
+	"moonlight/internal/schedule"
 )
 
 const version = "0.2.0"
@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	global := flag.NewFlagSet("monlight", flag.ContinueOnError)
+	global := flag.NewFlagSet("moonlight", flag.ContinueOnError)
 	configPath := global.String("config", defaultCfgPath, "Path to config.json")
 	global.Usage = printUsage
 
@@ -76,7 +76,7 @@ func main() {
 	case "daemon":
 		runErr = cmdDaemon(*configPath, cmdArgs)
 	case "version":
-		fmt.Printf("monlight %s\n", version)
+		fmt.Printf("moonlight %s\n", version)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -92,10 +92,10 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(`monlight - Cross-platform DDC/CI brightness & night-light daemon (Windows & macOS)
+	fmt.Print(`moonlight - Cross-platform DDC/CI brightness & night-light daemon (Windows & macOS)
 
 Usage:
-  monlight [-config path/to/config.json] <command> [args]
+  moonlight [-config path/to/config.json] <command> [args]
 
 Commands:
   init [-force]           Create a default config.json tuned for Gigabyte M27UP
@@ -106,7 +106,7 @@ Commands:
   set [flags]             Manually set brightness/temp/RGB (-confirm auto-reverts in 12s)
   reset                   EMERGENCY RESCUE: pause daemon & reset all monitors to safe defaults
   restore                 Pause daemon & restore initial monitor backup saved before first write
-  pause [duration]        Pause automatic updates (e.g. "monlight pause 2h", or forever)
+  pause [duration]        Pause automatic updates (e.g. "moonlight pause 2h", or forever)
   resume                  Resume automatic updates and apply schedule immediately
   daemon [-dry-run]       Run the background scheduling loop
   version                 Print version
@@ -197,7 +197,7 @@ func cmdPreview(configPath string) error {
 		return err
 	}
 	if !loaded {
-		fmt.Printf("(using built-in defaults; run `monlight init` to create %s)\n\n", configPath)
+		fmt.Printf("(using built-in defaults; run `moonlight init` to create %s)\n\n", configPath)
 	}
 
 	fmt.Println("Time   Brightness  TempK   RGB (R, G, B)")
@@ -439,7 +439,7 @@ func cmdReset(configPath string) error {
 	if err := daemon.ResetAll(cfg, backend, logger); err != nil {
 		return err
 	}
-	fmt.Println("Emergency reset complete. Daemon is paused; run `monlight resume` when ready.")
+	fmt.Println("Emergency reset complete. Daemon is paused; run `moonlight resume` when ready.")
 	return nil
 }
 
@@ -460,7 +460,7 @@ func cmdRestore(configPath string) error {
 	if err := daemon.RestoreBackup(cfg, backend, config.BackupPathForConfig(configPath), logger); err != nil {
 		return err
 	}
-	fmt.Println("Restored original monitor snapshot. Daemon is paused; run `monlight resume` when ready.")
+	fmt.Println("Restored original monitor snapshot. Daemon is paused; run `moonlight resume` when ready.")
 	return nil
 }
 
@@ -488,7 +488,7 @@ func cmdPause(configPath string, args []string) error {
 	if err := config.SaveState(statePath, st); err != nil {
 		return err
 	}
-	fmt.Println("Paused automatic updates indefinitely. Run `monlight resume` to continue.")
+	fmt.Println("Paused automatic updates indefinitely. Run `moonlight resume` to continue.")
 	return nil
 }
 

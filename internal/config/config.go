@@ -19,7 +19,7 @@ type Point struct {
 	RGB        *[3]int `json:"rgb,omitempty"`
 }
 
-// Config holds all runtime settings for monlight.
+// Config holds all runtime settings for moonlight.
 type Config struct {
 	// MonitorMatch filters external monitors by case-insensitive substring (e.g. "M27UP").
 	// Leave empty to target all detected DDC/CI monitors.
@@ -48,7 +48,7 @@ type Config struct {
 	// Prevents accidentally writing [0, 0, 0] and blacking out the screen.
 	MinRGB int `json:"min_rgb"`
 
-	// SafeBrightness is the fallback brightness used by `monlight reset` (default 70).
+	// SafeBrightness is the fallback brightness used by `moonlight reset` (default 70).
 	SafeBrightness int `json:"safe_brightness"`
 
 	// EnableBrightness toggles hardware brightness (VCP 0x10) control.
@@ -58,14 +58,14 @@ type Config struct {
 	EnableNightLight bool `json:"enable_night_light"`
 
 	// ColorPresetUser optionally writes VCP 0x14 before updating RGB gains (0 disables).
-	// On some monitors User Color mode is 0x0B (11). Run `monlight probe` first to verify.
+	// On some monitors User Color mode is 0x0B (11). Run `moonlight probe` first to verify.
 	ColorPresetUser int `json:"color_preset_user"`
 
 	// RGBNeutral is the monitor's neutral daytime RGB gain baseline (typically [100,100,100] or [50,50,50]).
 	RGBNeutral [3]int `json:"rgb_neutral"`
 
 	// DDCTool optionally specifies the path to m1ddc / ddcctl on macOS.
-	// When empty, monlight searches PATH and standard Homebrew directories.
+	// When empty, moonlight searches PATH and standard Homebrew directories.
 	DDCTool string `json:"ddc_tool"`
 
 	// Schedule contains keyframes across a 24-hour cycle.
@@ -93,7 +93,7 @@ func (s State) IsPaused(now time.Time) bool {
 // DefaultConfig returns a sensible starter configuration tuned for Gigabyte M27UP.
 func DefaultConfig() *Config {
 	return &Config{
-		MonitorMatch:        "M27UP",
+		MonitorMatch:        "M27UP,GBT273E",
 		PollIntervalSec:     60,
 		CommandDelayMs:      60,
 		Retries:             2,
@@ -118,13 +118,13 @@ func DefaultConfig() *Config {
 	}
 }
 
-// DefaultDir returns the per-user configuration directory for monlight.
+// DefaultDir returns the per-user configuration directory for moonlight.
 func DefaultDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user config dir: %w", err)
 	}
-	return filepath.Join(base, "monlight"), nil
+	return filepath.Join(base, "moonlight"), nil
 }
 
 // DefaultConfigPath returns the default config.json path.
@@ -146,7 +146,7 @@ func BackupPathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "backup.json")
 }
 
-// MonitorSnapshot stores original hardware VCP values read before monlight's first write.
+// MonitorSnapshot stores original hardware VCP values read before moonlight's first write.
 type MonitorSnapshot struct {
 	Name          string    `json:"name"`
 	Device        string    `json:"device"`

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BIN_PATH="${1:-/usr/local/bin/monlight}"
+BIN_PATH="${1:-/usr/local/bin/moonlight}"
 PLIST_DIR="$HOME/Library/LaunchAgents"
-PLIST_PATH="$PLIST_DIR/com.monlight.daemon.plist"
-LOG_DIR="$HOME/Library/Logs/monlight"
+PLIST_PATH="$PLIST_DIR/com.moonlight.daemon.plist"
+LOG_DIR="$HOME/Library/Logs/moonlight"
 
 if [ ! -x "$BIN_PATH" ]; then
   echo "Error: executable not found at $BIN_PATH"
   echo "Copy the built binary there first, e.g.:"
-  echo "  sudo cp dist/monlight-darwin-arm64 /usr/local/bin/monlight && sudo chmod +x /usr/local/bin/monlight"
+  echo "  sudo cp dist/moonlight-darwin-arm64 /usr/local/bin/moonlight && sudo chmod +x /usr/local/bin/moonlight"
   exit 1
 fi
 
@@ -21,7 +21,7 @@ cat > "$PLIST_PATH" <<EOF
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.monlight.daemon</string>
+  <string>com.moonlight.daemon</string>
   <key>ProgramArguments</key>
   <array>
     <string>${BIN_PATH}</string>

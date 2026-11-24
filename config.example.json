@@ -1,5 +1,5 @@
 {
-  "monitor_match": "M27UP",
+  "monitor_match": "M27UP,GBT273E",
   "poll_interval_sec": 60,
   "command_delay_ms": 60,
   "retries": 2,

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"monlight/internal/config"
+	"moonlight/internal/config"
 )
 
 // Target represents the computed monitor settings for a specific moment in time.

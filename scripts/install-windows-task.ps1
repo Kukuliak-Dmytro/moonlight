@@ -1,6 +1,6 @@
 param(
-    [string]$BinaryPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\monlight-windows-amd64.exe"),
-    [string]$TaskName = "MonlightDaemon"
+    [string]$BinaryPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\moonlight-windows-amd64.exe"),
+    [string]$TaskName = "MoonlightDaemon"
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,7 +24,7 @@ Register-ScheduledTask `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Description "Automatic DDC/CI monitor brightness & night light schedule (monlight)" `
+    -Description "Automatic DDC/CI monitor brightness & night light schedule (moonlight)" `
     -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName

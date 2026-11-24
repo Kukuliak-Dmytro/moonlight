@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"monlight/internal/config"
+	"moonlight/internal/config"
 )
 
 func at(hour, min int) time.Time {
