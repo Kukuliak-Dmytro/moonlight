@@ -1,12 +1,17 @@
 param(
-    [string]$BinaryPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\moonlight-windows-amd64.exe"),
+    [string]$BinaryPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\moonlight.exe"),
     [string]$TaskName = "MoonlightDaemon"
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $BinaryPath)) {
-    throw "Binary not found at $BinaryPath. Build it first with .\scripts\build-windows.ps1"
+    $Fallback = Join-Path (Split-Path -Parent $PSScriptRoot) "dist\moonlight-windows-amd64.exe"
+    if (Test-Path $Fallback) {
+        $BinaryPath = $Fallback
+    } else {
+        throw "Binary not found in dist\. Build it first with: go run ./scripts/build.go"
+    }
 }
 
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\moonlight"

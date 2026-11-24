@@ -61,38 +61,35 @@ Values are smoothly linearly interpolated every minute between keyframes (includ
 
 ## Build & Installation
 
-### Build Binaries
+`scripts/build.go` is a single universal build script that works identically on **Windows, macOS, and Linux** (no bash, PowerShell policy flags, or `make` required):
 
-**Windows binary only (PowerShell):**
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
-```
-
-**All platforms — Windows + macOS (macOS / Linux / Windows Git Bash):**
 ```bash
-./scripts/build-all.sh
-# or via Makefile:
-make test && make build-all
-```
+# Build automatically for your current OS -> dist/moonlight(.exe)
+go run ./scripts/build.go
 
-Built artifacts in `dist/`:
-- `dist/moonlight-windows-amd64.exe`
-- `dist/moonlight-darwin-arm64` *(Apple Silicon)*
-- `dist/moonlight-darwin-amd64` *(Intel Mac)*
+# Run tests and build for your current OS
+go run ./scripts/build.go -test
+
+# Cross-compile binaries for all platforms (Windows amd64 + macOS arm64 & amd64)
+go run ./scripts/build.go -all
+```
 
 ---
 
 ### Quick Start — Windows
 
 ```powershell
-# 1. Initialize config and interactively pick your monitor
-.\dist\moonlight-windows-amd64.exe init
+# 1. Build for Windows -> dist\moonlight.exe
+go run ./scripts/build.go
 
-# 2. Preview the 24-hour curve and run a safe dry-run
-.\dist\moonlight-windows-amd64.exe preview
-.\dist\moonlight-windows-amd64.exe apply -dry-run
+# 2. Initialize config and interactively pick your monitor
+.\dist\moonlight.exe init
 
-# 3. Install hidden background autostart (Task Scheduler)
+# 3. Preview the 24-hour curve and run a safe dry-run
+.\dist\moonlight.exe preview
+.\dist\moonlight.exe apply -dry-run
+
+# 4. Install to PATH + hidden background autostart (Task Scheduler)
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-task.ps1
 ```
 
@@ -104,15 +101,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows-task.ps1
 # 1. Install m1ddc (Apple Silicon)
 brew install m1ddc
 
-# 2. Install binary into PATH
-sudo cp dist/moonlight-darwin-arm64 /usr/local/bin/moonlight
+# 2. Build for macOS -> dist/moonlight
+go run ./scripts/build.go
+
+# 3. Install binary into PATH
+sudo cp dist/moonlight /usr/local/bin/moonlight
 sudo chmod +x /usr/local/bin/moonlight
 
-# 3. Pick your monitor and create config.json
+# 4. Pick your monitor and create config.json
 moonlight init
 
-# 4. Install background LaunchAgent
-chmod +x scripts/install-macos-agent.sh
+# 5. Install background LaunchAgent
 ./scripts/install-macos-agent.sh /usr/local/bin/moonlight
 ```
 
@@ -204,14 +203,12 @@ moonlight/
 │   ├── gamma/                       # Native OS gamma night light (Windows gdi32 / macOS CoreGraphics)
 │   └── daemon/                      # Background loop, hot-reload, KVM reconnect handling, reset/restore
 ├── scripts/
-│   ├── build-windows.ps1            # Build Windows binary (PowerShell)
-│   ├── build-all.sh                 # Universal cross-compile script for Windows + macOS (macOS / Linux / Git Bash)
-│   ├── install-windows-task.ps1     # Windows Task Scheduler autostart installer
+│   ├── build.go                     # Universal auto-detecting build script (Windows / macOS / Linux)
+│   ├── install-windows-task.ps1     # Windows PATH + Task Scheduler autostart installer
 │   ├── run-daemon-hidden.vbs        # Hidden launcher for Windows (no console window)
 │   ├── install-macos-agent.sh       # macOS LaunchAgent installer
 │   ├── rescue-windows.bat           # Emergency rescue script (Windows)
 │   └── rescue-macos.command         # Emergency rescue script (macOS)
 ├── config.example.json              # Default 24-hour curve & safety config template
-├── Makefile                         # Build & test targets (macOS / Linux / Git Bash)
 └── go.mod
 ```
