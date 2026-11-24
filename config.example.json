@@ -10,7 +10,7 @@
   "safe_brightness": 50,
   "enable_brightness": true,
   "enable_night_light": true,
-  "color_preset_user": 11,
+  "color_preset_user": 0,
   "rgb_neutral": [100, 100, 100],
   "ddc_tool": "",
   "schedule": [
