@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $BinaryPath)) {
-    throw "Binary not found at $BinaryPath. Build it first with .\scripts\build-all.ps1"
+    throw "Binary not found at $BinaryPath. Build it first with .\scripts\build-windows.ps1"
 }
 
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\moonlight"

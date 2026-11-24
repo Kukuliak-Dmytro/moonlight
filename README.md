@@ -61,17 +61,18 @@ Values are smoothly linearly interpolated every minute between keyframes (includ
 
 ## Build & Installation
 
-### Build Binaries for All Platforms
+### Build Binaries
 
-**From Windows (PowerShell):**
+**Windows binary only (PowerShell):**
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
 
-**From macOS / Linux / Git Bash:**
+**All platforms — Windows + macOS (macOS / Linux / Windows Git Bash):**
 ```bash
-make test
-make build-all
+./scripts/build-all.sh
+# or via Makefile:
+make test && make build-all
 ```
 
 Built artifacts in `dist/`:
@@ -203,13 +204,14 @@ moonlight/
 │   ├── gamma/                       # Native OS gamma night light (Windows gdi32 / macOS CoreGraphics)
 │   └── daemon/                      # Background loop, hot-reload, KVM reconnect handling, reset/restore
 ├── scripts/
-│   ├── build-all.ps1                # Cross-compile Windows + macOS binaries (run on Windows)
+│   ├── build-windows.ps1            # Build Windows binary (PowerShell)
+│   ├── build-all.sh                 # Universal cross-compile script for Windows + macOS (macOS / Linux / Git Bash)
 │   ├── install-windows-task.ps1     # Windows Task Scheduler autostart installer
 │   ├── run-daemon-hidden.vbs        # Hidden launcher for Windows (no console window)
 │   ├── install-macos-agent.sh       # macOS LaunchAgent installer
 │   ├── rescue-windows.bat           # Emergency rescue script (Windows)
 │   └── rescue-macos.command         # Emergency rescue script (macOS)
 ├── config.example.json              # Default 24-hour curve & safety config template
-├── Makefile                         # Build, cross-compile & test targets (macOS / Linux / Git Bash)
+├── Makefile                         # Build & test targets (macOS / Linux / Git Bash)
 └── go.mod
 ```
