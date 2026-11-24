@@ -37,6 +37,20 @@ type Config struct {
 	// MinDelta is the minimum absolute difference required before issuing a DDC/CI write.
 	MinDelta int `json:"min_delta"`
 
+	// MinBrightness is the hard safety floor for hardware brightness (default 5).
+	// Prevents accidentally setting the display to 0% and making it unreadable.
+	MinBrightness int `json:"min_brightness"`
+
+	// AllowZeroBrightness must be explicitly set to true if you want MinBrightness=0.
+	AllowZeroBrightness bool `json:"allow_zero_brightness,omitempty"`
+
+	// MinRGB is the hard safety floor for each RGB gain channel (default 25).
+	// Prevents accidentally writing [0, 0, 0] and blacking out the screen.
+	MinRGB int `json:"min_rgb"`
+
+	// SafeBrightness is the fallback brightness used by `monlight reset` (default 70).
+	SafeBrightness int `json:"safe_brightness"`
+
 	// EnableBrightness toggles hardware brightness (VCP 0x10) control.
 	EnableBrightness bool `json:"enable_brightness"`
 
@@ -79,16 +93,20 @@ func (s State) IsPaused(now time.Time) bool {
 // DefaultConfig returns a sensible starter configuration tuned for Gigabyte M27UP.
 func DefaultConfig() *Config {
 	return &Config{
-		MonitorMatch:     "M27UP",
-		PollIntervalSec:  60,
-		CommandDelayMs:   60,
-		Retries:          2,
-		MinDelta:         1,
-		EnableBrightness: true,
-		EnableNightLight: true,
-		ColorPresetUser:  0,
-		RGBNeutral:       [3]int{100, 100, 100},
-		DDCTool:          "",
+		MonitorMatch:        "M27UP",
+		PollIntervalSec:     60,
+		CommandDelayMs:      60,
+		Retries:             2,
+		MinDelta:            1,
+		MinBrightness:       5,
+		AllowZeroBrightness: false,
+		MinRGB:              25,
+		SafeBrightness:      70,
+		EnableBrightness:    true,
+		EnableNightLight:    true,
+		ColorPresetUser:     0,
+		RGBNeutral:          [3]int{100, 100, 100},
+		DDCTool:             "",
 		Schedule: []Point{
 			{Time: "07:00", Brightness: 40, TempK: 5200},
 			{Time: "09:30", Brightness: 75, TempK: 6500},
@@ -121,6 +139,63 @@ func DefaultConfigPath() (string, error) {
 // StatePathForConfig places state.json alongside the active config file.
 func StatePathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "state.json")
+}
+
+// BackupPathForConfig places backup.json alongside the active config file.
+func BackupPathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "backup.json")
+}
+
+// MonitorSnapshot stores original hardware VCP values read before monlight's first write.
+type MonitorSnapshot struct {
+	Name          string    `json:"name"`
+	Device        string    `json:"device"`
+	CapturedAt    time.Time `json:"captured_at"`
+	HasBrightness bool      `json:"has_brightness"`
+	Brightness    int       `json:"brightness"`
+	HasRGB        bool      `json:"has_rgb"`
+	RGB           [3]int    `json:"rgb"`
+}
+
+// Backup maps monitor keys to their original snapshots.
+type Backup struct {
+	Monitors map[string]MonitorSnapshot `json:"monitors"`
+}
+
+// LoadBackup reads backup.json; a missing file returns an empty Backup.
+func LoadBackup(path string) (Backup, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Backup{Monitors: make(map[string]MonitorSnapshot)}, nil
+		}
+		return Backup{}, fmt.Errorf("read backup %s: %w", path, err)
+	}
+	var b Backup
+	if err := json.Unmarshal(data, &b); err != nil {
+		return Backup{}, fmt.Errorf("parse backup %s: %w", path, err)
+	}
+	if b.Monitors == nil {
+		b.Monitors = make(map[string]MonitorSnapshot)
+	}
+	return b, nil
+}
+
+// SaveBackup writes backup.json atomically.
+func SaveBackup(path string, b Backup) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create backup dir: %w", err)
+	}
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Load reads and validates a Config from disk.
@@ -206,9 +281,24 @@ func (c *Config) Validate() error {
 	if c.MinDelta < 0 {
 		c.MinDelta = 0
 	}
+	if c.MinBrightness < 0 || c.MinBrightness > 100 {
+		return fmt.Errorf("min_brightness=%d must be in 0..100", c.MinBrightness)
+	}
+	if c.MinBrightness == 0 && !c.AllowZeroBrightness {
+		return errors.New("min_brightness=0 is blocked for safety (set allow_zero_brightness=true to override)")
+	}
+	if c.MinRGB < 10 || c.MinRGB > 100 {
+		return fmt.Errorf("min_rgb=%d must be in 10..100 for safety", c.MinRGB)
+	}
+	if c.SafeBrightness < c.MinBrightness || c.SafeBrightness > 100 {
+		c.SafeBrightness = 70
+	}
 	for i, ch := range c.RGBNeutral {
 		if ch <= 0 || ch > 255 {
 			return fmt.Errorf("rgb_neutral[%d]=%d must be in 1..255", i, ch)
+		}
+		if ch < c.MinRGB {
+			return fmt.Errorf("rgb_neutral[%d]=%d cannot be below min_rgb=%d", i, ch, c.MinRGB)
 		}
 	}
 	if len(c.Schedule) == 0 {
@@ -226,13 +316,13 @@ func (c *Config) Validate() error {
 		}
 		seen[mins] = true
 
-		if p.Brightness < 0 || p.Brightness > 100 {
-			return fmt.Errorf("schedule[%d].brightness=%d must be in 0..100", i, p.Brightness)
+		if p.Brightness < c.MinBrightness || p.Brightness > 100 {
+			return fmt.Errorf("schedule[%d].brightness=%d must be in %d..100 (min_brightness safety floor)", i, p.Brightness, c.MinBrightness)
 		}
 		if p.RGB != nil {
 			for chIdx, ch := range p.RGB {
-				if ch < 0 || ch > 255 {
-					return fmt.Errorf("schedule[%d].rgb[%d]=%d must be in 0..255", i, chIdx, ch)
+				if ch < c.MinRGB || ch > 255 {
+					return fmt.Errorf("schedule[%d].rgb[%d]=%d must be in %d..255 (min_rgb safety floor)", i, chIdx, ch, c.MinRGB)
 				}
 			}
 		} else if c.EnableNightLight && (p.TempK < 1500 || p.TempK > 10000) {

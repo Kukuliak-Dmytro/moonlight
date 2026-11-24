@@ -21,6 +21,13 @@ type AppliedState struct {
 	PresetSent    bool
 }
 
+// ApplyOptions controls how ApplyTarget writes settings to monitors.
+type ApplyOptions struct {
+	Force      bool
+	DryRun     bool
+	BackupPath string
+}
+
 // NewBackendFromConfig constructs the platform DDC/CI backend using config timing options.
 func NewBackendFromConfig(cfg *config.Config) ddc.Backend {
 	return ddc.NewBackend(ddc.Options{
@@ -30,16 +37,102 @@ func NewBackendFromConfig(cfg *config.Config) ddc.Backend {
 	})
 }
 
+// ClampTarget enforces hard safety floors right before any DDC/CI write so a bad
+// config, math bug, or typo can never black out the monitor.
+func ClampTarget(cfg *config.Config, target schedule.Target) schedule.Target {
+	out := target
+
+	minB := cfg.MinBrightness
+	if minB < 1 && !cfg.AllowZeroBrightness {
+		minB = 5
+	}
+	if out.Brightness < minB {
+		out.Brightness = minB
+	}
+	if out.Brightness > 100 {
+		out.Brightness = 100
+	}
+
+	minRGB := cfg.MinRGB
+	if minRGB < 10 {
+		minRGB = 10
+	}
+	for i := 0; i < 3; i++ {
+		if out.RGB[i] < minRGB {
+			out.RGB[i] = minRGB
+		}
+		if out.RGB[i] > 255 {
+			out.RGB[i] = 255
+		}
+	}
+	return out
+}
+
+// MonitorKey builds a stable identifier for a physical monitor.
+func MonitorKey(info ddc.MonitorInfo) string {
+	return info.ID + "|" + info.Name + "|" + info.Device
+}
+
+// CaptureSnapshot reads the current hardware brightness and RGB values from a monitor.
+func CaptureSnapshot(mon ddc.Monitor) config.MonitorSnapshot {
+	info := mon.Info()
+	snap := config.MonitorSnapshot{
+		Name:       info.Name,
+		Device:     info.Device,
+		CapturedAt: time.Now(),
+	}
+	if v, err := mon.GetVCP(ddc.VCPBrightness); err == nil {
+		snap.HasBrightness = true
+		snap.Brightness = int(v.Current)
+	}
+	r, errR := mon.GetVCP(ddc.VCPRedGain)
+	g, errG := mon.GetVCP(ddc.VCPGreenGain)
+	b, errB := mon.GetVCP(ddc.VCPBlueGain)
+	if errR == nil && errG == nil && errB == nil {
+		snap.HasRGB = true
+		snap.RGB = [3]int{int(r.Current), int(g.Current), int(b.Current)}
+	}
+	return snap
+}
+
+func ensureBackupSnapshot(backupPath string, mon ddc.Monitor, logger *log.Logger) {
+	if backupPath == "" {
+		return
+	}
+	b, err := config.LoadBackup(backupPath)
+	if err != nil {
+		logger.Printf("warn: load backup failed: %v", err)
+		return
+	}
+	key := MonitorKey(mon.Info())
+	if _, exists := b.Monitors[key]; exists {
+		return
+	}
+	snap := CaptureSnapshot(mon)
+	if !snap.HasBrightness && !snap.HasRGB {
+		return
+	}
+	b.Monitors[key] = snap
+	if err := config.SaveBackup(backupPath, b); err != nil {
+		logger.Printf("warn: save backup snapshot failed: %v", err)
+		return
+	}
+	logger.Printf("saved initial hardware backup for [%s]: brightness=%d%% rgb=%v -> %s",
+		snap.Name, snap.Brightness, snap.RGB, backupPath)
+}
+
 // ApplyTarget writes brightness and/or RGB gain to all matching monitors.
-// When last is non-nil and force is false, unchanged values within cfg.MinDelta are skipped.
+// Safety floors are enforced via ClampTarget before any DDC/CI write.
 func ApplyTarget(
 	cfg *config.Config,
 	backend ddc.Backend,
-	target schedule.Target,
-	force bool,
+	rawTarget schedule.Target,
+	opts ApplyOptions,
 	last map[string]AppliedState,
 	logger *log.Logger,
 ) (int, error) {
+	target := ClampTarget(cfg, rawTarget)
+
 	allMonitors, err := backend.ListMonitors()
 	if err != nil {
 		return 0, err
@@ -52,7 +145,7 @@ func ApplyTarget(
 
 	for _, mon := range monitors {
 		info := mon.Info()
-		key := info.ID + "|" + info.Name + "|" + info.Device
+		key := MonitorKey(info)
 		seenKeys[key] = true
 
 		var prev AppliedState
@@ -61,8 +154,8 @@ func ApplyTarget(
 			prev, havePrev = last[key]
 		}
 
-		needBrightness := cfg.EnableBrightness && (force || !havePrev || !prev.HasBrightness || absInt(target.Brightness-prev.Brightness) >= cfg.MinDelta)
-		needRGB := cfg.EnableNightLight && (force || !havePrev || !prev.HasRGB ||
+		needBrightness := cfg.EnableBrightness && (opts.Force || !havePrev || !prev.HasBrightness || absInt(target.Brightness-prev.Brightness) >= cfg.MinDelta)
+		needRGB := cfg.EnableNightLight && (opts.Force || !havePrev || !prev.HasRGB ||
 			absInt(target.RGB[0]-prev.RGB[0]) >= cfg.MinDelta ||
 			absInt(target.RGB[1]-prev.RGB[1]) >= cfg.MinDelta ||
 			absInt(target.RGB[2]-prev.RGB[2]) >= cfg.MinDelta)
@@ -70,6 +163,15 @@ func ApplyTarget(
 		if !needBrightness && !needRGB {
 			continue
 		}
+
+		if opts.DryRun {
+			logger.Printf("[dry-run] would apply [%s]: brightness=%d%% rgb=%v (~%dK)",
+				info.Name, target.Brightness, target.RGB, target.TempK)
+			updatedCount++
+			continue
+		}
+
+		ensureBackupSnapshot(opts.BackupPath, mon, logger)
 
 		nextState := prev
 		monFailed := false
@@ -85,7 +187,7 @@ func ApplyTarget(
 		}
 
 		if needRGB && !monFailed {
-			if cfg.ColorPresetUser > 0 && (!prev.PresetSent || force) {
+			if cfg.ColorPresetUser > 0 && (!prev.PresetSent || opts.Force) {
 				if err := mon.SetVCP(ddc.VCPColorPreset, uint32(cfg.ColorPresetUser)); err != nil {
 					logger.Printf("warn: [%s] set color preset=%d failed: %v", info.Name, cfg.ColorPresetUser, err)
 				} else {
@@ -118,7 +220,6 @@ func ApplyTarget(
 		}
 
 		if monFailed {
-			// Clear cached state so the monitor gets a fresh full apply once KVM returns.
 			if last != nil {
 				delete(last, key)
 			}
@@ -132,7 +233,6 @@ func ApplyTarget(
 		logger.Printf("applied [%s]: brightness=%d%% rgb=%v (~%dK)", info.Name, target.Brightness, target.RGB, target.TempK)
 	}
 
-	// Evict disconnected monitors so reconnecting via KVM triggers an immediate re-apply.
 	if last != nil {
 		for k := range last {
 			if !seenKeys[k] {
@@ -148,8 +248,94 @@ func ApplyTarget(
 	return updatedCount, nil
 }
 
+// ResetAll forces safe brightness and neutral RGB on ALL detected DDC/CI monitors,
+// bypassing MonitorMatch so emergency recovery always works.
+func ResetAll(cfg *config.Config, backend ddc.Backend, logger *log.Logger) error {
+	monitors, err := backend.ListMonitors()
+	if err != nil {
+		return err
+	}
+	defer ddc.CloseAll(monitors)
+
+	if len(monitors) == 0 {
+		return fmt.Errorf("no DDC/CI monitors detected")
+	}
+
+	safeB := cfg.SafeBrightness
+	if safeB < 30 || safeB > 100 {
+		safeB = 70
+	}
+	neutral := cfg.RGBNeutral
+
+	var lastErr error
+	for _, mon := range monitors {
+		info := mon.Info()
+		if err := mon.SetVCP(ddc.VCPBrightness, uint32(safeB)); err != nil {
+			logger.Printf("warn: reset brightness on [%s] failed: %v", info.Name, err)
+			lastErr = err
+		}
+		if err := mon.SetVCP(ddc.VCPRedGain, uint32(neutral[0])); err != nil {
+			logger.Printf("warn: reset red on [%s] failed: %v", info.Name, err)
+			lastErr = err
+		}
+		if err := mon.SetVCP(ddc.VCPGreenGain, uint32(neutral[1])); err != nil {
+			logger.Printf("warn: reset green on [%s] failed: %v", info.Name, err)
+			lastErr = err
+		}
+		if err := mon.SetVCP(ddc.VCPBlueGain, uint32(neutral[2])); err != nil {
+			logger.Printf("warn: reset blue on [%s] failed: %v", info.Name, err)
+			lastErr = err
+		}
+		logger.Printf("reset [%s]: brightness=%d%% rgb=%v", info.Name, safeB, neutral)
+	}
+	return lastErr
+}
+
+// RestoreBackup writes back the original hardware values saved in backup.json.
+func RestoreBackup(cfg *config.Config, backend ddc.Backend, backupPath string, logger *log.Logger) error {
+	b, err := config.LoadBackup(backupPath)
+	if err != nil {
+		return err
+	}
+	if len(b.Monitors) == 0 {
+		return fmt.Errorf("no saved snapshots in %s (use `monlight reset` instead)", backupPath)
+	}
+
+	monitors, err := backend.ListMonitors()
+	if err != nil {
+		return err
+	}
+	defer ddc.CloseAll(monitors)
+
+	restored := 0
+	for _, mon := range monitors {
+		info := mon.Info()
+		snap, ok := b.Monitors[MonitorKey(info)]
+		if !ok {
+			continue
+		}
+		if snap.HasBrightness {
+			if err := mon.SetVCP(ddc.VCPBrightness, uint32(snap.Brightness)); err != nil {
+				logger.Printf("warn: restore brightness on [%s] failed: %v", info.Name, err)
+			}
+		}
+		if snap.HasRGB {
+			_ = mon.SetVCP(ddc.VCPRedGain, uint32(snap.RGB[0]))
+			_ = mon.SetVCP(ddc.VCPGreenGain, uint32(snap.RGB[1]))
+			_ = mon.SetVCP(ddc.VCPBlueGain, uint32(snap.RGB[2]))
+		}
+		logger.Printf("restored [%s] from backup: brightness=%d%% rgb=%v", info.Name, snap.Brightness, snap.RGB)
+		restored++
+	}
+
+	if restored == 0 {
+		return fmt.Errorf("none of the connected monitors matched backup.json (use `monlight reset` instead)")
+	}
+	return nil
+}
+
 // Run starts the foreground daemon loop until ctx is cancelled.
-func Run(ctx context.Context, configPath string, logger *log.Logger) error {
+func Run(ctx context.Context, configPath string, dryRun bool, logger *log.Logger) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -161,18 +347,18 @@ func Run(ctx context.Context, configPath string, logger *log.Logger) error {
 	}
 
 	statePath := config.StatePathForConfig(configPath)
+	backupPath := config.BackupPathForConfig(configPath)
 	backend := NewBackendFromConfig(cfg)
 	lastApplied := make(map[string]AppliedState)
 
-	logger.Printf("monlight daemon started (backend=%s, config=%s, poll=%ds, filter=%q)",
-		backend.Name(), configPath, cfg.PollIntervalSec, cfg.MonitorMatch)
+	logger.Printf("monlight daemon started (backend=%s, config=%s, poll=%ds, filter=%q, dry_run=%v)",
+		backend.Name(), configPath, cfg.PollIntervalSec, cfg.MonitorMatch, dryRun)
 
 	wasPaused := false
 	tick := func(force bool) {
-		// Hot-reload config if edited on disk.
 		if st, err := os.Stat(configPath); err == nil && !st.ModTime().Equal(configModTime) {
 			if reloaded, err := config.Load(configPath); err != nil {
-				logger.Printf("warn: config reload failed, keeping previous config: %v", err)
+				logger.Printf("warn: config reload failed, keeping previous safe config: %v", err)
 			} else {
 				cfg = reloaded
 				backend = NewBackendFromConfig(cfg)
@@ -201,7 +387,6 @@ func Run(ctx context.Context, configPath string, logger *log.Logger) error {
 		}
 
 		if wasPaused || (st.Paused && !st.IsPaused(now)) {
-			// Pause expired or resumed: clear expired pause state and force apply.
 			if st.Paused {
 				_ = config.SaveState(statePath, config.State{})
 			}
@@ -216,12 +401,16 @@ func Run(ctx context.Context, configPath string, logger *log.Logger) error {
 			return
 		}
 
-		if _, err := ApplyTarget(cfg, backend, target, force, lastApplied, logger); err != nil {
+		applyOpts := ApplyOptions{
+			Force:      force,
+			DryRun:     dryRun,
+			BackupPath: backupPath,
+		}
+		if _, err := ApplyTarget(cfg, backend, target, applyOpts, lastApplied, logger); err != nil {
 			logger.Printf("info: waiting for monitor (%v)", err)
 		}
 	}
 
-	// Immediate initial apply.
 	tick(true)
 
 	interval := time.Duration(cfg.PollIntervalSec) * time.Second

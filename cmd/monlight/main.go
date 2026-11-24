@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -19,7 +20,7 @@ import (
 	"monlight/internal/schedule"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
@@ -64,12 +65,16 @@ func main() {
 		runErr = cmdApply(*configPath, cmdArgs)
 	case "set":
 		runErr = cmdSet(*configPath, cmdArgs)
+	case "reset":
+		runErr = cmdReset(*configPath)
+	case "restore":
+		runErr = cmdRestore(*configPath)
 	case "pause":
 		runErr = cmdPause(*configPath, cmdArgs)
 	case "resume":
 		runErr = cmdResume(*configPath)
 	case "daemon":
-		runErr = cmdDaemon(*configPath)
+		runErr = cmdDaemon(*configPath, cmdArgs)
 	case "version":
 		fmt.Printf("monlight %s\n", version)
 	case "help", "-h", "--help":
@@ -97,11 +102,13 @@ Commands:
   probe                   List connected DDC/CI monitors and read current VCP values
   preview                 Show the interpolated 24-hour brightness/RGB curve
   status                  Show active backend, pause state, and current target
-  apply                   Apply the current schedule target immediately
-  set [flags]             Manually set brightness/temp/RGB (and optionally pause daemon)
+  apply [-dry-run]        Apply the current schedule target immediately
+  set [flags]             Manually set brightness/temp/RGB (-confirm auto-reverts in 12s)
+  reset                   EMERGENCY RESCUE: pause daemon & reset all monitors to safe defaults
+  restore                 Pause daemon & restore initial monitor backup saved before first write
   pause [duration]        Pause automatic updates (e.g. "monlight pause 2h", or forever)
   resume                  Resume automatic updates and apply schedule immediately
-  daemon                  Run the background scheduling loop
+  daemon [-dry-run]       Run the background scheduling loop
   version                 Print version
 `)
 }
@@ -202,6 +209,7 @@ func cmdPreview(configPath string) error {
 		if err != nil {
 			return err
 		}
+		target = daemon.ClampTarget(cfg, target)
 		fmt.Printf("%02d:00  %9d%%  %5dK  [%3d, %3d, %3d]\n",
 			h, target.Brightness, target.TempK, target.RGB[0], target.RGB[1], target.RGB[2])
 	}
@@ -225,11 +233,14 @@ func cmdStatus(configPath string) error {
 	if err != nil {
 		return err
 	}
+	target = daemon.ClampTarget(cfg, target)
 
 	backend := daemon.NewBackendFromConfig(cfg)
 	fmt.Printf("Config:   %s (exists=%v)\n", configPath, loaded)
 	fmt.Printf("Backend:  %s\n", backend.Name())
 	fmt.Printf("Filter:   %q\n", cfg.MonitorMatch)
+	fmt.Printf("Safety:   min_brightness=%d%%, min_rgb=%d, safe_brightness=%d%%\n",
+		cfg.MinBrightness, cfg.MinRGB, cfg.SafeBrightness)
 	if st.IsPaused(now) {
 		if st.PausedUntil != nil {
 			fmt.Printf("State:    PAUSED until %s (%s)\n", st.PausedUntil.Format("15:04"), st.Reason)
@@ -259,6 +270,12 @@ func cmdStatus(configPath string) error {
 }
 
 func cmdApply(configPath string, args []string) error {
+	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "Print what would be applied without writing to monitors")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	cfg, _, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return err
@@ -271,16 +288,21 @@ func cmdApply(configPath string, args []string) error {
 
 	backend := daemon.NewBackendFromConfig(cfg)
 	logger := log.New(os.Stdout, "", log.Ltime)
-	_, err = daemon.ApplyTarget(cfg, backend, target, true, nil, logger)
+	_, err = daemon.ApplyTarget(cfg, backend, target, daemon.ApplyOptions{
+		Force:      true,
+		DryRun:     *dryRun,
+		BackupPath: config.BackupPathForConfig(configPath),
+	}, nil, logger)
 	return err
 }
 
 func cmdSet(configPath string, args []string) error {
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
-	brightness := fs.Int("brightness", -1, "Brightness 0..100")
+	brightness := fs.Int("brightness", -1, "Brightness (clamped to min_brightness..100)")
 	tempK := fs.Int("temp", 0, "Color temperature in Kelvin (e.g. 4200 or 6500)")
 	rgbStr := fs.String("rgb", "", "Explicit RGB gains, e.g. 100,82,66")
 	pauseDur := fs.String("pause", "", "Optionally pause daemon for a duration (e.g. 2h)")
+	confirm := fs.Bool("confirm", false, "Auto-revert to previous settings after 12s unless you press Enter")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -318,13 +340,127 @@ func cmdSet(configPath string, args []string) error {
 
 	backend := daemon.NewBackendFromConfig(&overrideCfg)
 	logger := log.New(os.Stdout, "", log.Ltime)
-	if _, err := daemon.ApplyTarget(&overrideCfg, backend, target, true, nil, logger); err != nil {
+
+	// Capture live snapshot before applying if -confirm is enabled.
+	var beforeSnaps map[string]config.MonitorSnapshot
+	if *confirm {
+		allMons, err := backend.ListMonitors()
+		if err != nil {
+			return err
+		}
+		matched := ddc.FilterMonitors(allMons, overrideCfg.MonitorMatch)
+		beforeSnaps = make(map[string]config.MonitorSnapshot, len(matched))
+		for _, m := range matched {
+			beforeSnaps[daemon.MonitorKey(m.Info())] = daemon.CaptureSnapshot(m)
+		}
+		ddc.CloseAll(matched)
+	}
+
+	if _, err := daemon.ApplyTarget(&overrideCfg, backend, target, daemon.ApplyOptions{
+		Force:      true,
+		BackupPath: config.BackupPathForConfig(configPath),
+	}, nil, logger); err != nil {
 		return err
+	}
+
+	if *confirm {
+		if !waitForEnter(12 * time.Second) {
+			fmt.Println("\nNo confirmation received — reverting monitor to previous settings...")
+			revertSnapshots(&overrideCfg, backend, beforeSnaps, logger)
+			return nil
+		}
+		fmt.Println("Settings confirmed.")
 	}
 
 	if *pauseDur != "" {
 		return cmdPause(configPath, []string{*pauseDur})
 	}
+	return nil
+}
+
+func waitForEnter(timeout time.Duration) bool {
+	fmt.Printf("Press ENTER within %ds to keep these settings (otherwise auto-reverting)... ", int(timeout.Seconds()))
+	done := make(chan struct{}, 1)
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		_, _ = reader.ReadString('\n')
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func revertSnapshots(cfg *config.Config, backend ddc.Backend, snaps map[string]config.MonitorSnapshot, logger *log.Logger) {
+	monitors, err := backend.ListMonitors()
+	if err != nil {
+		logger.Printf("warn: revert failed to list monitors: %v", err)
+		return
+	}
+	defer ddc.CloseAll(monitors)
+
+	for _, mon := range monitors {
+		snap, ok := snaps[daemon.MonitorKey(mon.Info())]
+		if !ok {
+			continue
+		}
+		if snap.HasBrightness {
+			_ = mon.SetVCP(ddc.VCPBrightness, uint32(snap.Brightness))
+		}
+		if snap.HasRGB {
+			_ = mon.SetVCP(ddc.VCPRedGain, uint32(snap.RGB[0]))
+			_ = mon.SetVCP(ddc.VCPGreenGain, uint32(snap.RGB[1]))
+			_ = mon.SetVCP(ddc.VCPBlueGain, uint32(snap.RGB[2]))
+		}
+		logger.Printf("reverted [%s]: brightness=%d%% rgb=%v", snap.Name, snap.Brightness, snap.RGB)
+	}
+}
+
+func cmdReset(configPath string) error {
+	// Always pause daemon first so it does not immediately overwrite the rescue reset.
+	statePath := config.StatePathForConfig(configPath)
+	_ = config.SaveState(statePath, config.State{
+		Paused: true,
+		Reason: "emergency reset",
+	})
+
+	cfg, _, err := loadConfigOrDefault(configPath)
+	if err != nil {
+		// Even if config.json is broken/corrupted, fall back to safe defaults so rescue ALWAYS works!
+		fmt.Fprintf(os.Stderr, "warn: config invalid (%v); using safe defaults for reset\n", err)
+		cfg = config.DefaultConfig()
+	}
+
+	backend := daemon.NewBackendFromConfig(cfg)
+	logger := log.New(os.Stdout, "", log.Ltime)
+	if err := daemon.ResetAll(cfg, backend, logger); err != nil {
+		return err
+	}
+	fmt.Println("Emergency reset complete. Daemon is paused; run `monlight resume` when ready.")
+	return nil
+}
+
+func cmdRestore(configPath string) error {
+	statePath := config.StatePathForConfig(configPath)
+	_ = config.SaveState(statePath, config.State{
+		Paused: true,
+		Reason: "restored from backup",
+	})
+
+	cfg, _, err := loadConfigOrDefault(configPath)
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
+
+	backend := daemon.NewBackendFromConfig(cfg)
+	logger := log.New(os.Stdout, "", log.Ltime)
+	if err := daemon.RestoreBackup(cfg, backend, config.BackupPathForConfig(configPath), logger); err != nil {
+		return err
+	}
+	fmt.Println("Restored original monitor snapshot. Daemon is paused; run `monlight resume` when ready.")
 	return nil
 }
 
@@ -365,8 +501,13 @@ func cmdResume(configPath string) error {
 	return cmdApply(configPath, nil)
 }
 
-func cmdDaemon(configPath string) error {
-	// Ensure config exists on first daemon start so autostart works out of the box.
+func cmdDaemon(configPath string, args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "Run daemon loop without writing to monitors")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
 		if err := config.Save(configPath, config.DefaultConfig()); err != nil {
 			return fmt.Errorf("auto-create default config: %w", err)
@@ -377,7 +518,7 @@ func cmdDaemon(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return daemon.Run(ctx, configPath, log.Default())
+	return daemon.Run(ctx, configPath, *dryRun, log.Default())
 }
 
 func parseRGB(s string) ([3]int, error) {
