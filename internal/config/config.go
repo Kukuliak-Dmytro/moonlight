@@ -81,6 +81,23 @@ type Config struct {
 	Schedule []Point `json:"schedule"`
 }
 
+const (
+	// MinSafeBrightness is the lowest brightness `moonlight reset` will ever write:
+	// a rescue that leaves the screen near-black is not a rescue.
+	MinSafeBrightness = 30
+	// FallbackSafeBrightness replaces a SafeBrightness that is out of range.
+	FallbackSafeBrightness = 70
+)
+
+// EffectiveSafeBrightness returns the brightness used by reset. It is the single
+// place that normalizes safe_brightness, shared by Validate and the reset command.
+func (c *Config) EffectiveSafeBrightness() int {
+	if c.SafeBrightness < MinSafeBrightness || c.SafeBrightness < c.MinBrightness || c.SafeBrightness > 100 {
+		return FallbackSafeBrightness
+	}
+	return c.SafeBrightness
+}
+
 // State tracks runtime control flags shared between CLI commands and the daemon.
 type State struct {
 	Paused      bool       `json:"paused"`
@@ -304,9 +321,7 @@ func (c *Config) Validate() error {
 	if c.MinRGB < 10 || c.MinRGB > 100 {
 		return fmt.Errorf("min_rgb=%d must be in 10..100 for safety", c.MinRGB)
 	}
-	if c.SafeBrightness < c.MinBrightness || c.SafeBrightness > 100 {
-		c.SafeBrightness = 70
-	}
+	c.SafeBrightness = c.EffectiveSafeBrightness()
 	switch strings.ToLower(strings.TrimSpace(c.NightLightMode)) {
 	case "", "gamma":
 		c.NightLightMode = "gamma"

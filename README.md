@@ -104,18 +104,25 @@ brew install m1ddc
 # 2. Build for macOS -> dist/moonlight
 go run ./scripts/build.go
 
-# 3. Install binary into PATH
-sudo cp dist/moonlight /usr/local/bin/moonlight
-sudo chmod +x /usr/local/bin/moonlight
+# 3. Install: copies the binary to /opt/homebrew/bin (or /usr/local/bin, else ~/.local/bin)
+#    and registers + starts the background LaunchAgent. Re-run it after a rebuild to upgrade.
+./dist/moonlight install
 
 # 4. Pick your monitor and create config.json
 moonlight init
-
-# 5. Install background LaunchAgent
-./scripts/install-macos-agent.sh /usr/local/bin/moonlight
 ```
 
-macOS daemon logs are written to `~/Library/Logs/moonlight/stdout.log`.
+`moonlight uninstall` stops and removes the agent and the installed binary (your config
+is kept). `moonlight install -no-agent` only copies the binary.
+
+The daemon runs from the installed copy, not from the source folder: launching a
+binary out of `~/Desktop` or `~/Documents` makes macOS ask for access to that folder.
+
+macOS daemon logs are written to `~/Library/Logs/moonlight/stderr.log` (`stdout.log` stays empty).
+
+**How the macOS night light stays on.** macOS drops a screen tint when the process that set it exits, and resets it on sleep/wake. moonlight therefore runs a small background `gamma-holder` process (started on demand) that re-applies the tint every 2 seconds. The daemon renews its lease every poll, and keeps renewing it while paused, so `moonlight pause` freezes the tint along with the brightness. If the daemon stops, the tint is released after about 5 minutes. The holder logs to `~/Library/Logs/moonlight/holder.log`. Turn off macOS **Night Shift** and **True Tone** so they do not fight the tint.
+
+**Downloaded release binaries** are unsigned, so macOS Gatekeeper blocks them at first launch. Either build from source, or clear the quarantine flag once: `xattr -d com.apple.quarantine ./moonlight-darwin-arm64`.
 
 ---
 
@@ -166,10 +173,10 @@ See [`config.example.json`](config.example.json) for the full default template:
 
 - `adapter` — auto-detected monitor profile name (set by `moonlight init` / `moonlight select`).
 - `monitor_match` — comma-separated case-insensitive substrings to filter monitors (`""` targets all DDC monitors).
-- `night_light_mode` — `"gamma"` (recommended), `"ddc"`, or `"both"`.
+- `night_light_mode` — `"gamma"` (recommended), `"ddc"`, or `"both"`. Gamma is an OS-wide setting: it is written once per update and affects all displays, regardless of `monitor_match`. On macOS a gamma table vanishes when the process that set it exits, so moonlight keeps a small background `gamma-holder` process alive that the daemon refreshes every poll; if the daemon stops, the tint is released after a few minutes (`moonlight reset` releases it immediately).
 - `min_brightness` / `allow_zero_brightness` — safety floor for backlight brightness (`0` is blocked unless `allow_zero_brightness` is `true`).
 - `min_rgb` — hard minimum per RGB channel (`10..100`, default `25`) to prevent blacking out the screen.
-- `safe_brightness` — fallback brightness used by `moonlight reset`.
+- `safe_brightness` — brightness used by `moonlight reset` (values below `30` or above `100` fall back to `70`, so a rescue never leaves the screen near-black).
 - `schedule[].temp_k` — target color temperature in Kelvin (`1500..10000`), or specify explicit `"rgb": [100, 82, 66]`.
 
 ---
@@ -194,19 +201,19 @@ See [`config.example.json`](config.example.json) for the full default template:
 
 ```text
 moonlight/
-├── cmd/moonlight/main.go            # CLI and daemon entrypoint
+├── cmd/moonlight/                   # CLI and daemon entrypoint (main.go, install_cmd.go)
 ├── internal/
 │   ├── adapter/                     # Monitor auto-discovery, vendor profiles, interactive picker + tests
 │   ├── config/                      # Config loader, validation, state.json, backup.json + tests
 │   ├── schedule/                    # 24-hour curve interpolation & Kelvin -> RGB math + tests
 │   ├── ddc/                         # DDC/CI backends (Windows dxva2 / macOS m1ddc, ddcctl)
 │   ├── gamma/                       # Native OS gamma night light (Windows gdi32 / macOS CoreGraphics)
+│   ├── install/                     # `moonlight install` / `uninstall`: copy to PATH + macOS LaunchAgent + tests
 │   └── daemon/                      # Background loop, hot-reload, KVM reconnect handling, reset/restore
 ├── scripts/
 │   ├── build.go                     # Universal auto-detecting build script (Windows / macOS / Linux)
 │   ├── install-windows-task.ps1     # Windows PATH + Task Scheduler autostart installer
 │   ├── run-daemon-hidden.vbs        # Hidden launcher for Windows (no console window)
-│   ├── install-macos-agent.sh       # macOS LaunchAgent installer
 │   ├── rescue-windows.bat           # Emergency rescue script (Windows)
 │   └── rescue-macos.command         # Emergency rescue script (macOS)
 ├── config.example.json              # Default 24-hour curve & safety config template

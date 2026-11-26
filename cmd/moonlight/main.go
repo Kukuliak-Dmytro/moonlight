@@ -22,7 +22,8 @@ import (
 	"moonlight/internal/schedule"
 )
 
-const version = "0.3.0"
+// version is stamped at build time (-ldflags "-X main.version=v1.2.3"); a plain build keeps this.
+var version = "0.3.0-dev"
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
@@ -55,38 +56,18 @@ func main() {
 
 	var runErr error
 	switch cmd {
-	case "init":
-		runErr = cmdInit(*configPath, cmdArgs)
-	case "select", "setup":
-		runErr = cmdSelect(*configPath, cmdArgs)
-	case "probe":
-		runErr = cmdProbe(*configPath)
-	case "preview":
-		runErr = cmdPreview(*configPath)
-	case "status":
-		runErr = cmdStatus(*configPath)
-	case "apply":
-		runErr = cmdApply(*configPath, cmdArgs)
-	case "set":
-		runErr = cmdSet(*configPath, cmdArgs)
-	case "reset":
-		runErr = cmdReset(*configPath)
-	case "restore":
-		runErr = cmdRestore(*configPath)
-	case "pause":
-		runErr = cmdPause(*configPath, cmdArgs)
-	case "resume":
-		runErr = cmdResume(*configPath)
-	case "daemon":
-		runErr = cmdDaemon(*configPath, cmdArgs)
 	case "version":
 		fmt.Printf("moonlight %s\n", version)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
-		printUsage()
-		os.Exit(2)
+		run, ok := commands[cmd]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
+			printUsage()
+			os.Exit(2)
+		}
+		runErr = run(*configPath, cmdArgs)
 	}
 
 	if runErr != nil {
@@ -95,8 +76,9 @@ func main() {
 	}
 }
 
-func printUsage() {
-	fmt.Print(`moonlight - Cross-platform DDC/CI brightness & night-light daemon (Windows & macOS)
+func printUsage() { fmt.Print(usageText) }
+
+const usageText = `moonlight - Cross-platform DDC/CI brightness & night-light daemon (Windows & macOS)
 
 Usage:
   moonlight [-config path/to/config.json] <command> [args]
@@ -114,9 +96,10 @@ Commands:
   pause [duration]            Pause automatic updates (e.g. "moonlight pause 2h", or forever)
   resume                      Resume automatic updates and apply schedule immediately
   daemon [-dry-run]           Run the background scheduling loop
+  install [-bin-dir d]        Copy this binary onto PATH and register the background agent (macOS)
+  uninstall [-keep-binary]    Stop and remove the background agent and the installed binary
   version                     Print version
-`)
-}
+`
 
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
@@ -390,10 +373,22 @@ func cmdSet(configPath string, args []string) error {
 	if *brightness < 0 && *tempK == 0 && *rgbStr == "" {
 		return errors.New("specify at least one of -brightness, -temp, or -rgb")
 	}
+	if *confirm && !isTerminal(os.Stdin) {
+		return errors.New("-confirm needs an interactive terminal: stdin is not a TTY, so nobody could press Enter")
+	}
 
 	cfg, _, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return err
+	}
+
+	// On macOS gamma is a lease: hold it as long as the manual override should last.
+	if *pauseDur != "" {
+		d, err := time.ParseDuration(*pauseDur)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("invalid -pause duration %q (examples: 30m, 2h)", *pauseDur)
+		}
+		gamma.SetLease(d)
 	}
 
 	overrideCfg := *cfg
@@ -460,15 +455,15 @@ func cmdSet(configPath string, args []string) error {
 
 func waitForEnter(timeout time.Duration) bool {
 	fmt.Printf("Press ENTER within %ds to keep these settings (otherwise auto-reverting)... ", int(timeout.Seconds()))
-	done := make(chan struct{}, 1)
+	done := make(chan bool, 1)
 	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		_, _ = reader.ReadString('\n')
-		done <- struct{}{}
+		// A read error (stdin closed or at EOF) is not a confirmation: only a real Enter keeps the settings.
+		_, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		done <- err == nil
 	}()
 	select {
-	case <-done:
-		return true
+	case confirmed := <-done:
+		return confirmed
 	case <-time.After(timeout):
 		return false
 	}

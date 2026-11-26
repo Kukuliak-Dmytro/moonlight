@@ -136,3 +136,9 @@ func clampU16(v float64) uint16 {
 	}
 	return uint16(rounded)
 }
+
+// Keepalive is a no-op on Windows: the gamma ramp stays set without a holder process.
+func Keepalive() error { return nil }
+
+// EnsureCurrent has no holder to replace on this platform.
+func EnsureCurrent() error { return nil }

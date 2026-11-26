@@ -102,32 +102,29 @@ func (b *darwinBackend) ListMonitors() ([]Monitor, error) {
 	}
 
 	var monitors []Monitor
+	for _, info := range parseM1ddcList(out) {
+		monitors = append(monitors, &m1ddcMonitor{toolPath: b.toolPath, info: info, opts: b.opts})
+	}
+	return monitors, nil
+}
+
+// parseM1ddcList turns `m1ddc display list` output into MonitorInfo entries.
+// Lines that do not match the expected format are skipped.
+func parseM1ddcList(out string) []MonitorInfo {
+	var infos []MonitorInfo
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		m := m1ddcDisplayRe.FindStringSubmatch(line)
+		m := m1ddcDisplayRe.FindStringSubmatch(strings.TrimSpace(line))
 		if m == nil {
 			continue
 		}
 		id := m[1]
 		name := strings.TrimSpace(m[2])
-		uuid := strings.TrimSpace(m[3])
 		if name == "(null)" || name == "" {
 			name = "External Display " + id
 		}
-		monitors = append(monitors, &m1ddcMonitor{
-			toolPath: b.toolPath,
-			info: MonitorInfo{
-				ID:     id,
-				Name:   name,
-				Device: uuid,
-			},
-			opts: b.opts,
-		})
+		infos = append(infos, MonitorInfo{ID: id, Name: name, Device: strings.TrimSpace(m[3])})
 	}
-	return monitors, nil
+	return infos
 }
 
 type m1ddcMonitor struct {
@@ -137,7 +134,16 @@ type m1ddcMonitor struct {
 }
 
 func (m *m1ddcMonitor) Info() MonitorInfo { return m.info }
-func (m *m1ddcMonitor) Close() error      { return nil }
+
+// selector addresses the display by UUID when known: the list index can change when
+// displays are replugged or reordered, which would send writes to the wrong screen.
+func (m *m1ddcMonitor) selector() string {
+	if m.info.Device != "" {
+		return m.info.Device
+	}
+	return m.info.ID
+}
+func (m *m1ddcMonitor) Close() error { return nil }
 
 func m1ddcFeatureName(code byte) (string, error) {
 	switch code {
@@ -162,11 +168,11 @@ func (m *m1ddcMonitor) GetVCP(code byte) (VCPValue, error) {
 
 	var out VCPValue
 	err = WithRetry(m.opts.Retries, m.opts.CommandDelay, func() error {
-		curStr, err := runCmd(m.toolPath, "display", m.info.ID, "get", attr)
+		curStr, err := runCmd(m.toolPath, "display", m.selector(), "get", attr)
 		if err != nil {
 			return err
 		}
-		cur, err := parseLastInt(curStr)
+		cur, err := parseM1ddcValue(curStr)
 		if err != nil {
 			return fmt.Errorf("parse m1ddc get %s output %q: %w", attr, curStr, err)
 		}
@@ -175,8 +181,8 @@ func (m *m1ddcMonitor) GetVCP(code byte) (VCPValue, error) {
 		}
 
 		maxVal := uint32(100)
-		if maxStr, err := runCmd(m.toolPath, "display", m.info.ID, "max", attr); err == nil {
-			if parsed, err := parseLastInt(maxStr); err == nil && parsed > 0 {
+		if maxStr, err := runCmd(m.toolPath, "display", m.selector(), "max", attr); err == nil {
+			if parsed, err := parseM1ddcValue(maxStr); err == nil && parsed > 0 {
 				maxVal = uint32(parsed)
 			}
 		}
@@ -197,7 +203,7 @@ func (m *m1ddcMonitor) SetVCP(code byte, value uint32) error {
 	}
 
 	return WithRetry(m.opts.Retries, m.opts.CommandDelay, func() error {
-		_, err := runCmd(m.toolPath, "display", m.info.ID, "set", attr, strconv.FormatUint(uint64(value), 10))
+		_, err := runCmd(m.toolPath, "display", m.selector(), "set", attr, strconv.FormatUint(uint64(value), 10))
 		if err != nil {
 			return err
 		}
@@ -243,11 +249,11 @@ func (m *ddcctlMonitor) GetVCP(code byte) (VCPValue, error) {
 		if err != nil {
 			return err
 		}
-		val, err := parseLastInt(res)
+		cur, max, err := parseDDCCtlValue(res)
 		if err != nil {
 			return err
 		}
-		out = VCPValue{Current: uint32(val), Max: 100}
+		out = VCPValue{Current: uint32(cur), Max: uint32(max)}
 		return nil
 	})
 	return out, err
@@ -283,12 +289,32 @@ func runCmd(name string, args ...string) (string, error) {
 	return trimmed, nil
 }
 
-var intRe = regexp.MustCompile(`\d+`)
+var (
+	plainIntRe  = regexp.MustCompile(`^\d+$`)
+	ddcctlCurRe = regexp.MustCompile(`current:\s*(\d+)(?:\s*,\s*max:\s*(\d+))?`)
+)
 
-func parseLastInt(s string) (int, error) {
-	matches := intRe.FindAllString(s, -1)
-	if len(matches) == 0 {
-		return 0, fmt.Errorf("no integer found in %q", s)
+// parseM1ddcValue parses `m1ddc ... get|max` output, which is a single integer.
+// Anything else (an error message, extra text) is rejected rather than guessed at.
+func parseM1ddcValue(s string) (int, error) {
+	t := strings.TrimSpace(s)
+	if !plainIntRe.MatchString(t) {
+		return 0, fmt.Errorf("expected a single integer from m1ddc, got %q", s)
 	}
-	return strconv.Atoi(matches[len(matches)-1])
+	return strconv.Atoi(t)
+}
+
+// parseDDCCtlValue parses ddcctl query output of the form "... current: 50, max: 100".
+// The current value is taken explicitly: the last integer would be the maximum.
+func parseDDCCtlValue(s string) (cur, max int, err error) {
+	m := ddcctlCurRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, 0, fmt.Errorf("no \"current: N\" value in ddcctl output %q", s)
+	}
+	cur, _ = strconv.Atoi(m[1])
+	max = 100
+	if m[2] != "" {
+		max, _ = strconv.Atoi(m[2])
+	}
+	return cur, max, nil
 }

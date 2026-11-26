@@ -3,10 +3,15 @@
 // Universal cross-platform build script for moonlight.
 // Works identically on Windows (PowerShell/CMD), macOS, and Linux — no bash or make required.
 //
+// It only builds. To put the result on PATH and register the background agent, run
+// the built binary's own installer: ./dist/moonlight install
+//
 // Usage:
-//   go run ./scripts/build.go        # Build for the current OS/arch -> dist/moonlight(.exe)
-//   go run ./scripts/build.go -all   # Cross-compile Windows + macOS (arm64 & amd64) into dist/
-//   go run ./scripts/build.go -test  # Run unit tests before building
+//
+//	go run ./scripts/build.go        # Build for the current OS/arch -> dist/moonlight(.exe)
+//	go run ./scripts/build.go -all   # Cross-compile Windows + macOS (arm64 & amd64) into dist/
+//	go run ./scripts/build.go -test  # Run unit tests before building
+//	MOONLIGHT_VERSION=v1.2.3 go run ./scripts/build.go   # stamp a version into `moonlight version`
 package main
 
 import (
@@ -58,6 +63,12 @@ func main() {
 		}
 	}
 
+	// Stamp the release version into the binary when MOONLIGHT_VERSION is set (CI does, from the tag).
+	ldflags := "-s -w"
+	if v := os.Getenv("MOONLIGHT_VERSION"); v != "" {
+		ldflags += " -X main.version=" + v
+	}
+
 	for _, t := range targets {
 		fmt.Printf("Building %s/%s -> %s\n", t.goos, t.goarch, t.output)
 		env := append(os.Environ(),
@@ -65,7 +76,7 @@ func main() {
 			"GOOS="+t.goos,
 			"GOARCH="+t.goarch,
 		)
-		if err := runGo(env, "build", "-trimpath", "-ldflags=-s -w", "-o", t.output, "./cmd/moonlight"); err != nil {
+		if err := runGo(env, "build", "-trimpath", "-ldflags="+ldflags, "-o", t.output, "./cmd/moonlight"); err != nil {
 			fatal(err)
 		}
 		if fi, err := os.Stat(t.output); err == nil {

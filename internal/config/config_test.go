@@ -31,3 +31,20 @@ func TestValidateBlocksBlackoutRGB(t *testing.T) {
 		t.Fatalf("expected Validate to reject rgb=[0,0,0] below min_rgb floor")
 	}
 }
+
+func TestEffectiveSafeBrightness(t *testing.T) {
+	cases := []struct{ safe, min, want int }{
+		{50, 0, 50},
+		{30, 0, 30},
+		{29, 0, FallbackSafeBrightness},
+		{101, 0, FallbackSafeBrightness},
+		{40, 60, FallbackSafeBrightness},
+	}
+	for _, c := range cases {
+		cfg := DefaultConfig()
+		cfg.SafeBrightness, cfg.MinBrightness = c.safe, c.min
+		if got := cfg.EffectiveSafeBrightness(); got != c.want {
+			t.Errorf("safe=%d min=%d: got %d, want %d", c.safe, c.min, got, c.want)
+		}
+	}
+}
