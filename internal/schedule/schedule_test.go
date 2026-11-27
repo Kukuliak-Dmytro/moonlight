@@ -79,3 +79,18 @@ func TestEvaluateInterpolationAndWrapAround(t *testing.T) {
 		t.Fatalf("expected brightness 30 at 03:00 (wrap midpoint), got %d", midnightWrap.Brightness)
 	}
 }
+
+func TestTintStrengthIsThirtyPercentStronger(t *testing.T) {
+	if got := strengthen(1); got != 1 {
+		t.Fatalf("neutral must stay 1, got %v", got)
+	}
+	if got := strengthen(0.9); got < 0.869 || got > 0.871 {
+		t.Fatalf("0.9 should become 0.87 (deviation 0.1 -> 0.13), got %v", got)
+	}
+	if got := strengthen(0.5); got < 0.349 || got > 0.351 {
+		t.Fatalf("0.5 should become 0.35, got %v", got)
+	}
+	if got := strengthen(0.1); got != 0 {
+		t.Fatalf("must clamp at 0, got %v", got)
+	}
+}

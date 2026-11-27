@@ -18,10 +18,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Label is the launchd job label of the moonlight daemon.
 const Label = "com.moonlight.daemon"
+
+// bootstrapRetryDelay is the pause between launchctl bootstrap attempts; tests shorten it.
+var bootstrapRetryDelay = time.Second
 
 // runner executes an external command; a variable so tests can record calls.
 var runner = func(name string, args ...string) ([]byte, error) {
@@ -235,8 +239,18 @@ func Install(src string, p Paths, opt Options) error {
 
 	// bootout first so a changed plist or binary is picked up; it fails harmlessly if not loaded.
 	_, _ = runner("launchctl", "bootout", p.DomainID+"/"+Label)
-	if outp, err := runner("launchctl", "bootstrap", p.DomainID, p.Plist); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w (%s)", err, strings.TrimSpace(string(outp)))
+	// bootout returns before the old job is fully gone, so the first bootstrap can fail
+	// with "Input/output error"; retry briefly before giving up.
+	var outp []byte
+	var berr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if outp, berr = runner("launchctl", "bootstrap", p.DomainID, p.Plist); berr == nil {
+			break
+		}
+		time.Sleep(bootstrapRetryDelay)
+	}
+	if berr != nil {
+		return fmt.Errorf("launchctl bootstrap: %w (%s)", berr, strings.TrimSpace(string(outp)))
 	}
 	fmt.Fprintf(out, "LaunchAgent started (%s). Logs: %s\n", p.Plist, p.LogDir)
 	return nil

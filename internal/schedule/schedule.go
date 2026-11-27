@@ -148,10 +148,19 @@ func KelvinToRatios(kelvin int) [3]float64 {
 	ref := blackbodyRaw(6500.0)
 
 	return [3]float64{
-		clampFloat(raw[0]/ref[0], 0, 1),
-		clampFloat(raw[1]/ref[1], 0, 1),
-		clampFloat(raw[2]/ref[2], 0, 1),
+		strengthen(raw[0] / ref[0]),
+		strengthen(raw[1] / ref[1]),
+		strengthen(raw[2] / ref[2]),
 	}
+}
+
+// tintStrength scales how far each channel moves away from neutral: 1.3 makes the
+// night-light tint 30% stronger than the plain blackbody curve at every temperature.
+const tintStrength = 1.3
+
+// strengthen amplifies a channel's deviation from 1.0 by tintStrength, clamped to [0, 1].
+func strengthen(ratio float64) float64 {
+	return clampFloat(1-tintStrength*(1-clampFloat(ratio, 0, 1)), 0, 1)
 }
 
 // blackbodyRaw implements Tanner Helland's color temperature approximation.

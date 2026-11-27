@@ -69,6 +69,13 @@ func main() {
 		ldflags += " -X main.version=" + v
 	}
 
+	// Local builds remember their checkout so `moonlight update` can pull and rebuild it.
+	if os.Getenv("MOONLIGHT_VERSION") == "" {
+		if wd, err := os.Getwd(); err == nil {
+			ldflags += " -X main.repoDir=" + wd
+		}
+	}
+
 	for _, t := range targets {
 		fmt.Printf("Building %s/%s -> %s\n", t.goos, t.goarch, t.output)
 		env := append(os.Environ(),

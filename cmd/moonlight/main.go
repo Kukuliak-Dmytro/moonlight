@@ -98,6 +98,7 @@ Commands:
   daemon [-dry-run]           Run the background scheduling loop
   install [-bin-dir d]        Copy this binary onto PATH and register the background agent (macOS)
   uninstall [-keep-binary]    Stop and remove the background agent and the installed binary
+  update [-repo d] [-no-pull] Pull the source repo, rebuild, and relaunch the daemon on the new build
   version                     Print version
 `
 

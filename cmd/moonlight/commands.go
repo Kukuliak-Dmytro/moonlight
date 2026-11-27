@@ -21,6 +21,7 @@ var commands = map[string]func(configPath string, args []string) error{
 
 	"install":   func(_ string, a []string) error { return cmdInstall(a) },
 	"uninstall": func(_ string, a []string) error { return cmdUninstall(a) },
+	"update":    func(_ string, a []string) error { return cmdUpdate(a) },
 
 	// Internal: the macOS gamma holder, started on demand by the daemon and CLI.
 	"gamma-holder": func(string, []string) error { return gamma.RunHolder() },

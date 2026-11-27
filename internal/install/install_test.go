@@ -1,6 +1,7 @@
 package install
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -174,5 +175,34 @@ func TestUninstallRemovesAgentAndBinary(t *testing.T) {
 		if len(*calls) != 1 || (*calls)[0].args != "bootout gui/501/"+Label {
 			t.Fatalf("launchctl calls = %v", *calls)
 		}
+	}
+}
+
+func TestInstallRetriesBootstrapAfterBootout(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("LaunchAgent is macOS only")
+	}
+	oldRunner, oldDelay := runner, bootstrapRetryDelay
+	bootstrapRetryDelay = 0
+	defer func() { runner, bootstrapRetryDelay = oldRunner, oldDelay }()
+	fails := 2
+	var bootstraps int
+	runner = func(name string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "bootstrap" {
+			bootstraps++
+			if fails > 0 {
+				fails--
+				return []byte("Input/output error"), errors.New("exit status 5")
+			}
+		}
+		return nil, nil
+	}
+	root := t.TempDir()
+	src := writeBin(t, root, "b")
+	if err := Install(src, NewPaths(root, 501), Options{BinDir: filepath.Join(root, "bin")}); err != nil {
+		t.Fatalf("install should survive two transient bootstrap failures: %v", err)
+	}
+	if bootstraps != 3 {
+		t.Fatalf("bootstrap attempts = %d, want 3", bootstraps)
 	}
 }

@@ -112,6 +112,11 @@ go run ./scripts/build.go
 moonlight init
 ```
 
+**Updating.** `moonlight update` pulls the source repo (`git pull --ff-only`), rebuilds, and
+installs the new build, relaunching the daemon. It needs `git` and `go` on PATH. A binary built
+with `scripts/build.go` remembers its checkout; otherwise pass `-repo <dir>` or set
+`MOONLIGHT_REPO`. `-no-pull` skips the pull. On Windows it runs `scripts/install-windows-task.ps1`.
+
 `moonlight uninstall` stops and removes the agent and the installed binary (your config
 is kept). `moonlight install -no-agent` only copies the binary.
 
@@ -177,7 +182,7 @@ See [`config.example.json`](config.example.json) for the full default template:
 - `min_brightness` / `allow_zero_brightness` — safety floor for backlight brightness (`0` is blocked unless `allow_zero_brightness` is `true`).
 - `min_rgb` — hard minimum per RGB channel (`10..100`, default `25`) to prevent blacking out the screen.
 - `safe_brightness` — brightness used by `moonlight reset` (values below `30` or above `100` fall back to `70`, so a rescue never leaves the screen near-black).
-- `schedule[].temp_k` — target color temperature in Kelvin (`1500..10000`), or specify explicit `"rgb": [100, 82, 66]`.
+- `schedule[].temp_k` — target color temperature in Kelvin (`1500..10000`; the tint is drawn 30% stronger than the plain blackbody curve, see `tintStrength` in `internal/schedule`), or specify explicit `"rgb": [100, 82, 66]`.
 
 ---
 
